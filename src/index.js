@@ -4,19 +4,22 @@
 //   - The Worker (default export) routes incoming requests:
 //       /          -> serves index.html (via [assets] binding)
 //       /ws        -> upgrades to WebSocket and forwards to the Room DO
-//   - Each room is a Durable Object instance. It holds the game state in memory
-//     while active and persists it to its built-in SQLite storage so it survives
-//     hibernation. WebSockets use the Hibernation API.
+//   - Each room is a Durable Object instance. Holds game state in memory while
+//     active and persists to its built-in SQLite storage so it survives hibernation.
 
 import { DurableObject } from "cloudflare:workers";
 
-// Configuration ranges (validated server-side)
+// ---- Configuration ranges ----
 const MIN_BOARD = 8, MAX_BOARD = 24, DEFAULT_BOARD = 16;
-const MIN_INSET = 0, MAX_INSET = 4, DEFAULT_INSET = 1;
+// Offset is from the *center* of the board now.
+// offset=1 means heads are 1 cell from center on each side (very close).
+// offset=4 means heads are 4 cells from center on each side (far apart).
+const MIN_OFFSET = 1, MAX_OFFSET = 8, DEFAULT_OFFSET = 3;
 const VALID_LOOKAHEAD = [0, 1, 3, 5];
 const DEFAULT_LOOKAHEAD = 0;
+const STARTING_BITES = 3;
 
-// ---------- Tetromino shapes ----------
+// ---- Tetromino shapes ----
 const SHAPES = {
   I: [[0, 0], [1, 0], [2, 0], [3, 0]],
   O: [[0, 0], [1, 0], [0, 1], [1, 1]],
@@ -77,22 +80,46 @@ function validatePlacement(board, cells, playerNum, size) {
   return { ok: true };
 }
 
-function applyFlips(board, placedCells, playerNum, size) {
+// Bite validation: single cell, must be empty, must be 4-adjacent to one of your cells.
+function validateBite(board, x, y, playerNum, size) {
+  if (!inBounds(x, y, size)) return { ok: false, reason: "out of bounds" };
+  if (board[y][x] !== 0) return { ok: false, reason: "cell occupied" };
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const nx = x + dx, ny = y + dy;
+    if (inBounds(nx, ny, size) && board[ny][nx] === playerNum) {
+      return { ok: true };
+    }
+  }
+  return { ok: false, reason: "bite must touch your colony" };
+}
+
+// Reversi-style flip from each placed cell, in 8 directions.
+// IMPORTANT: heads are immune. We pass `headPositions` and skip flipping any cell
+// whose coords match a head.
+function applyFlips(board, placedCells, playerNum, size, headPositions) {
   const flipped = [];
   const dirs = [
     [1, 0], [-1, 0], [0, 1], [0, -1],
     [1, 1], [-1, -1], [1, -1], [-1, 1],
   ];
+  const isHead = (x, y) => headPositions.some(h => h.x === x && h.y === y);
+
   for (const [px, py] of placedCells) {
     for (const [dx, dy] of dirs) {
       let x = px + dx, y = py + dy;
       const line = [];
+      let hitHead = false;
       while (inBounds(x, y, size) && board[y][x] !== 0 && board[y][x] !== playerNum) {
+        if (isHead(x, y)) {
+          // Head blocks the bracket — neither flips nor counts as the closer.
+          hitHead = true;
+          break;
+        }
         line.push([x, y]);
         x += dx;
         y += dy;
       }
-      if (line.length > 0 && inBounds(x, y, size) && board[y][x] === playerNum) {
+      if (!hitHead && line.length > 0 && inBounds(x, y, size) && board[y][x] === playerNum) {
         for (const [fx, fy] of line) {
           board[fy][fx] = playerNum;
           flipped.push([fx, fy]);
@@ -101,6 +128,43 @@ function applyFlips(board, placedCells, playerNum, size) {
     }
   }
   return flipped;
+}
+
+// Check whether a head is captured: both N+S neighbors enemy, OR both E+W neighbors enemy.
+// "Enemy" means an enemy-colored cell present at that adjacent square.
+// Empty squares and friendly squares (including the head's own colony) do NOT count as enemy.
+function isHeadCaptured(board, head, size) {
+  const owner = head.playerNum;
+  const enemy = owner === 1 ? 2 : 1;
+  const at = (dx, dy) => {
+    const x = head.x + dx, y = head.y + dy;
+    if (!inBounds(x, y, size)) return null;
+    return board[y][x];
+  };
+  const ns = at(0, -1) === enemy && at(0, 1) === enemy;
+  const ew = at(-1, 0) === enemy && at(1, 0) === enemy;
+  return ns || ew;
+}
+
+// Threat status for visual warning: how many of the 4 axis-pairs have at least one enemy.
+// Returns 0 (safe), 1 (one side of a pair has enemy), 2 (one full pair = capture),
+// or counts that signal the warning state.
+function headThreatLevel(board, head, size) {
+  const owner = head.playerNum;
+  const enemy = owner === 1 ? 2 : 1;
+  const at = (dx, dy) => {
+    const x = head.x + dx, y = head.y + dy;
+    if (!inBounds(x, y, size)) return null;
+    return board[y][x];
+  };
+  const n = at(0, -1) === enemy ? 1 : 0;
+  const s = at(0, 1) === enemy ? 1 : 0;
+  const e = at(1, 0) === enemy ? 1 : 0;
+  const w = at(-1, 0) === enemy ? 1 : 0;
+  // 0 = safe; 1 = some pressure; 2 = one side of either axis is fully threatened (one more = capture); 3 = captured
+  if ((n && s) || (e && w)) return 3;
+  // If one axis has both, captured; otherwise count enemies present
+  return n + s + e + w;
 }
 
 function hasLegalMove(game, playerIdx) {
@@ -121,6 +185,18 @@ function hasLegalMove(game, playerIdx) {
   return false;
 }
 
+function hasLegalBite(game, playerIdx) {
+  if (game.bitesRemaining[playerIdx] <= 0) return false;
+  const playerNum = playerIdx + 1;
+  const size = game.size;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      if (validateBite(game.board, x, y, playerNum, size).ok) return true;
+    }
+  }
+  return false;
+}
+
 function countCells(board, playerNum, size) {
   let n = 0;
   for (let y = 0; y < size; y++)
@@ -129,21 +205,46 @@ function countCells(board, playerNum, size) {
   return n;
 }
 
+// Cells adjacent to head in a 5x5 area (head at center). Used for stalemate tiebreak.
+function countCellsNearHead(board, head, size) {
+  let n = 0;
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const x = head.x + dx, y = head.y + dy;
+      if (!inBounds(x, y, size)) continue;
+      if (board[y][x] === head.playerNum) n++;
+    }
+  }
+  return n;
+}
+
 function newGame(settings) {
-  const { size, inset } = settings;
+  const { size, offset } = settings;
   const board = Array.from({ length: size }, () => Array(size).fill(0));
-  board[inset][inset] = 1;
-  board[size - 1 - inset][size - 1 - inset] = 2;
+  // Heads placed offset-from-center on opposite sides of the diagonal.
+  // For an even-sized board, "center" is between cells (size/2 - 0.5, size/2 - 0.5).
+  // We anchor heads at floor(size/2) - 1 - (offset-1) and floor(size/2) + (offset-1) on both axes.
+  // Equivalently: head1 at (mid - offset, mid - offset), head2 at (mid + offset - 1, mid + offset - 1)
+  // where mid = floor(size/2).
+  const mid = Math.floor(size / 2);
+  const head1 = { x: mid - offset, y: mid - offset, playerNum: 1 };
+  const head2 = { x: mid + offset - 1, y: mid + offset - 1, playerNum: 2 };
+  board[head1.y][head1.x] = 1;
+  board[head2.y][head2.x] = 2;
+
   return {
     size,
-    inset,
+    offset,
     board,
+    heads: [head1, head2],
     turn: 0,
     bags: [topUpBag([], 12), topUpBag([], 12)],
     nextPiece: [null, null],
+    bitesRemaining: [STARTING_BITES, STARTING_BITES],
     moveLog: [],
     winner: null,
     finished: false,
+    endReason: null, // 'head_captured' | 'stalemate' | 'forfeit'
   };
 }
 
@@ -160,13 +261,13 @@ function clampInt(raw, lo, hi, fallback) {
 
 function validateSettings(raw) {
   const size = clampInt(raw.size, MIN_BOARD, MAX_BOARD, DEFAULT_BOARD);
-  let inset = clampInt(raw.inset, MIN_INSET, MAX_INSET, DEFAULT_INSET);
-  // Keep at least 2 cells of separation between seeds for any size
-  const maxInsetForSize = Math.max(0, Math.floor((size - 2) / 2) - 1);
-  inset = Math.min(inset, maxInsetForSize);
+  let offset = clampInt(raw.offset, MIN_OFFSET, MAX_OFFSET, DEFAULT_OFFSET);
+  // Cap offset so heads stay on the board
+  const maxOffsetForSize = Math.floor(size / 2);
+  offset = Math.min(offset, maxOffsetForSize);
   let lookahead = parseInt(raw.lookahead, 10);
   if (!VALID_LOOKAHEAD.includes(lookahead)) lookahead = DEFAULT_LOOKAHEAD;
-  return { size, inset, lookahead };
+  return { size, offset, lookahead };
 }
 
 // ============================================================
@@ -183,7 +284,7 @@ export class Room extends DurableObject {
       this.started = (await this.ctx.storage.get("started")) || false;
       this.settings = (await this.ctx.storage.get("settings")) || {
         size: DEFAULT_BOARD,
-        inset: DEFAULT_INSET,
+        offset: DEFAULT_OFFSET,
         lookahead: DEFAULT_LOOKAHEAD,
       };
     });
@@ -203,7 +304,7 @@ export class Room extends DurableObject {
       if (role === "create") {
         creatorSettings = validateSettings({
           size: url.searchParams.get("size"),
-          inset: url.searchParams.get("inset"),
+          offset: url.searchParams.get("offset"),
           lookahead: url.searchParams.get("lookahead"),
         });
       }
@@ -272,23 +373,32 @@ export class Room extends DurableObject {
       ? this.game.bags[perspectivePlayerIdx].slice(0, lookahead)
       : [];
 
+    // Send threat levels so the client can pulse warning visuals.
+    const threats = this.game.heads.map(h =>
+      headThreatLevel(this.game.board, h, this.game.size)
+    );
+
     return {
       type: "state",
       names: this.names,
       settings: this.settings,
       board: this.game.board,
       size: this.game.size,
+      heads: this.game.heads,
+      threats,
       turn: this.game.turn,
       nextPiece: this.game.nextPiece,
+      bitesRemaining: this.game.bitesRemaining,
       upcoming: myUpcoming,
       yourIndex: perspectivePlayerIdx,
       finished: this.game.finished,
       winner: this.game.winner,
+      endReason: this.game.endReason,
       counts: [
         countCells(this.game.board, 1, this.game.size),
         countCells(this.game.board, 2, this.game.size),
       ],
-      moveLog: this.game.moveLog.slice(-20),
+      moveLog: this.game.moveLog.slice(-25),
     };
   }
 
@@ -299,9 +409,7 @@ export class Room extends DurableObject {
       if (!att) continue;
       try {
         ws.send(JSON.stringify(this.publicState(att.playerIdx)));
-      } catch (e) {
-        // dead socket; ignore
-      }
+      } catch (e) { /* dead socket */ }
     }
   }
 
@@ -323,6 +431,17 @@ export class Room extends DurableObject {
       return;
     }
 
+    if (msg.type === "bite") {
+      const result = this.handleBite(playerIdx, msg);
+      if (result.error) {
+        ws.send(JSON.stringify({ type: "error", error: result.error }));
+        return;
+      }
+      await this.ctx.storage.put("game", this.game);
+      this.broadcastState();
+      return;
+    }
+
     if (msg.type === "rematch") {
       this.game = newGame(this.settings);
       dealPiece(this.game, 0);
@@ -330,6 +449,46 @@ export class Room extends DurableObject {
       await this.ctx.storage.put("game", this.game);
       this.broadcastState();
       return;
+    }
+  }
+
+  // Shared end-of-turn logic: check head capture, check stalemate, advance turn.
+  resolveEndOfTurn() {
+    const g = this.game;
+    // Head capture wins immediately
+    for (let i = 0; i < g.heads.length; i++) {
+      if (isHeadCaptured(g.board, g.heads[i], g.size)) {
+        g.finished = true;
+        g.endReason = "head_captured";
+        g.winner = i === 0 ? 1 : 0; // the OTHER player wins
+        return;
+      }
+    }
+
+    // Advance turn
+    g.turn = (g.turn + 1) % 2;
+    dealPiece(g, g.turn);
+
+    // Stalemate detection: both players unable to do anything (no legal piece, no legal bite)
+    let safety = 0;
+    while (
+      !hasLegalMove(g, g.turn) &&
+      !hasLegalBite(g, g.turn) &&
+      safety < 2
+    ) {
+      g.moveLog.push({ player: g.turn, skipped: true });
+      g.turn = (g.turn + 1) % 2;
+      dealPiece(g, g.turn);
+      safety++;
+    }
+    if (safety >= 2) {
+      g.finished = true;
+      g.endReason = "stalemate";
+      // Tiebreak: cells near head (5x5)
+      const near = g.heads.map(h => countCellsNearHead(g.board, h, g.size));
+      if (near[0] > near[1]) g.winner = 0;
+      else if (near[1] > near[0]) g.winner = 1;
+      else g.winner = -1;
     }
   }
 
@@ -345,11 +504,18 @@ export class Room extends DurableObject {
     const cells = shape.map(([dx, dy]) => [msg.x + dx, msg.y + dy]);
     const playerNum = playerIdx + 1;
 
+    // Disallow placing on a head
+    for (const [x, y] of cells) {
+      if (g.heads.some(h => h.x === x && h.y === y)) {
+        return { error: "cannot place on a head" };
+      }
+    }
+
     const v = validatePlacement(g.board, cells, playerNum, g.size);
     if (!v.ok) return { error: v.reason };
 
     for (const [x, y] of cells) g.board[y][x] = playerNum;
-    const flipped = applyFlips(g.board, cells, playerNum, g.size);
+    const flipped = applyFlips(g.board, cells, playerNum, g.size, g.heads);
 
     g.moveLog.push({
       player: playerIdx,
@@ -360,34 +526,38 @@ export class Room extends DurableObject {
       flipped: flipped.length,
     });
 
-    g.turn = (g.turn + 1) % 2;
-    dealPiece(g, g.turn);
+    this.resolveEndOfTurn();
+    return { ok: true };
+  }
 
-    const counts = [
-      countCells(g.board, 1, g.size),
-      countCells(g.board, 2, g.size),
-    ];
-    const alive = counts.map((c, i) => (c > 0 ? i : -1)).filter((i) => i >= 0);
-    if (alive.length === 1) {
-      g.finished = true;
-      g.winner = alive[0];
-    } else {
-      let safety = 0;
-      while (!hasLegalMove(g, g.turn) && safety < 2) {
-        g.moveLog.push({ player: g.turn, skipped: true });
-        g.turn = (g.turn + 1) % 2;
-        dealPiece(g, g.turn);
-        safety++;
-      }
-      if (safety >= 2) {
-        g.finished = true;
-        const max = Math.max(...counts);
-        const winners = counts
-          .map((c, i) => (c === max ? i : -1))
-          .filter((i) => i >= 0);
-        g.winner = winners.length === 1 ? winners[0] : -1;
-      }
+  handleBite(playerIdx, msg) {
+    const g = this.game;
+    if (!g || g.finished) return { error: "game not active" };
+    if (g.turn !== playerIdx) return { error: "not your turn" };
+    if (g.bitesRemaining[playerIdx] <= 0) return { error: "no bites remaining" };
+
+    const playerNum = playerIdx + 1;
+    // Disallow biting a head's cell
+    if (g.heads.some(h => h.x === msg.x && h.y === msg.y)) {
+      return { error: "cannot bite a head" };
     }
+
+    const v = validateBite(g.board, msg.x, msg.y, playerNum, g.size);
+    if (!v.ok) return { error: v.reason };
+
+    g.board[msg.y][msg.x] = playerNum;
+    g.bitesRemaining[playerIdx]--;
+    const flipped = applyFlips(g.board, [[msg.x, msg.y]], playerNum, g.size, g.heads);
+
+    g.moveLog.push({
+      player: playerIdx,
+      bite: true,
+      x: msg.x,
+      y: msg.y,
+      flipped: flipped.length,
+    });
+
+    this.resolveEndOfTurn();
     return { ok: true };
   }
 
@@ -395,6 +565,7 @@ export class Room extends DurableObject {
     const att = ws.deserializeAttachment();
     if (this.game && !this.game.finished && att) {
       this.game.finished = true;
+      this.game.endReason = "forfeit";
       this.game.winner = att.playerIdx === 0 ? 1 : 0;
       await this.ctx.storage.put("game", this.game);
       const sockets = this.ctx.getWebSockets();
@@ -417,12 +588,11 @@ export class Room extends DurableObject {
 }
 
 // ============================================================
-// Worker: routes HTTP requests
+// Worker
 // ============================================================
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-
     if (url.pathname === "/ws") {
       const room = (url.searchParams.get("room") || "").toUpperCase();
       if (!/^[A-Z2-9]{4}$/.test(room)) {
@@ -434,7 +604,6 @@ export default {
       doUrl.pathname = "/connect";
       return stub.fetch(doUrl.toString(), request);
     }
-
     return env.ASSETS.fetch(request);
   },
 };
