@@ -977,21 +977,37 @@ function drawBitePreview(x, y) {
   if (!lastState) return;
   if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return;
   const valid = checkValidBite(x, y, myIndex + 1, lastState.board, lastState.heads);
-  const color = valid ? getCSS("--warn") : getCSS("--text-dim");
   const px = x * CELL;
   const py = y * CELL;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.globalAlpha = 0.9;
-  ctx.strokeRect(px + 4, py + 4, CELL - 8, CELL - 8);
-  // X pattern to suggest "bite"
-  ctx.beginPath();
-  ctx.moveTo(px + 6, py + 6);
-  ctx.lineTo(px + CELL - 6, py + CELL - 6);
-  ctx.moveTo(px + CELL - 6, py + 6);
-  ctx.lineTo(px + 6, py + CELL - 6);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
+
+  if (valid) {
+    // Pulsing red overlay on the targeted enemy cell
+    const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
+    ctx.fillStyle = getCSS("--warn");
+    ctx.globalAlpha = 0.4 + pulse * 0.3;
+    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.shadowColor = getCSS("--warn-glow");
+    ctx.shadowBlur = CELL * 0.4;
+    ctx.strokeStyle = getCSS("--warn-glow");
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    // Bite-mark slash
+    ctx.moveTo(px + 6, py + 6);
+    ctx.lineTo(px + CELL - 6, py + CELL - 6);
+    ctx.moveTo(px + CELL - 6, py + 6);
+    ctx.lineTo(px + 6, py + CELL - 6);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  } else {
+    // Subtle "no" indicator
+    ctx.strokeStyle = getCSS("--text-dim");
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.5;
+    ctx.strokeRect(px + 4, py + 4, CELL - 8, CELL - 8);
+    ctx.globalAlpha = 1;
+  }
 }
 
 function checkValidPlacement(cells, playerNum, board, heads) {
@@ -1015,8 +1031,11 @@ function checkValidPlacement(cells, playerNum, board, heads) {
 
 function checkValidBite(x, y, playerNum, board, heads) {
   if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return false;
-  if (board[y][x] !== 0) return false;
   if (heads && heads.some(h => h.x === x && h.y === y)) return false;
+  const enemy = playerNum === 1 ? 2 : 1;
+  // Must be an enemy cell
+  if (board[y][x] !== enemy) return false;
+  // Must be adjacent to one of mine
   for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
     const nx = x + dx, ny = y + dy;
     if (nx >= 0 && nx < boardSize && ny >= 0 && ny < boardSize
@@ -1076,7 +1095,7 @@ function updateSidebar() {
         <line x1="-10" y1="-10" x2="10" y2="10" stroke="var(--warn)" stroke-width="2"/>
         <line x1="10" y1="-10" x2="-10" y2="10" stroke="var(--warn)" stroke-width="2"/>
       </g>`;
-    pieceHint.innerHTML = "Click anywhere adjacent to your colony.<br/>Click <kbd>BITE</kbd> again to cancel.";
+    pieceHint.innerHTML = "Click an enemy cell touching your colony.<br/>Disconnected enemy cells will die.<br/>Click <kbd>BITE</kbd> again to cancel.";
   } else if (myPiece) {
     pieceLabel.textContent = "YOUR NEXT SPORE";
     pieceLabel.style.color = "var(--text-dim)";
@@ -1115,7 +1134,7 @@ function updateSidebar() {
     status.classList.remove("bite-mode");
   } else if (lastState.turn === myIndex) {
     if (biteMode) {
-      status.textContent = "// BITE MODE — click an empty cell touching your colony";
+      status.textContent = "// BITE MODE — click an enemy cell adjacent to your colony";
       status.classList.add("bite-mode");
     } else {
       status.textContent = "// your move";
@@ -1152,14 +1171,20 @@ function updateLog() {
     const div = document.createElement("div");
     div.className = "log-entry p" + (entry.player + 1);
     const playerName = lastState.names[entry.player] || ("P" + (entry.player + 1));
-    const flipText = entry.flipped > 0
-      ? ` · <span class="flip">+${entry.flipped} flipped</span>` : "";
+    const turnTag = `<span class="turn-num">${String(turnNum).padStart(3,"0")}</span>`;
+    const who = `<span class="who">${escapeHtml(playerName)}</span>`;
     if (entry.skipped) {
-      div.innerHTML = `<span class="turn-num">${String(turnNum).padStart(3,"0")}</span> · <span class="who">${escapeHtml(playerName)}</span> skipped — no legal action`;
+      div.innerHTML = `${turnTag} · ${who} skipped — no legal action`;
     } else if (entry.bite) {
-      div.innerHTML = `<span class="turn-num">${String(turnNum).padStart(3,"0")}</span> · <span class="who">${escapeHtml(playerName)}</span> <span class="bite-tag">▼ BIT</span> @ ${entry.x},${entry.y}${flipText}`;
+      const killText = entry.killed > 0
+        ? ` · <span class="flip">${entry.killed} killed</span>` : "";
+      div.innerHTML = `${turnTag} · ${who} <span class="bite-tag">▼ BIT</span> @ ${entry.x},${entry.y}${killText}`;
     } else {
-      div.innerHTML = `<span class="turn-num">${String(turnNum).padStart(3,"0")}</span> · <span class="who">${escapeHtml(playerName)}</span> placed ${entry.piece} @ ${entry.x},${entry.y}${flipText}`;
+      const flipText = entry.flipped > 0
+        ? ` · <span class="flip">+${entry.flipped} flipped</span>` : "";
+      const convText = entry.converted > 0
+        ? ` · <span class="flip">+${entry.converted} absorbed</span>` : "";
+      div.innerHTML = `${turnTag} · ${who} placed ${entry.piece} @ ${entry.x},${entry.y}${flipText}${convText}`;
     }
     list.appendChild(div);
   });
