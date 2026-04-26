@@ -1,0 +1,7 @@
+{
+  "name": "netfungus",
+  "version": "0.1.0",
+  "description": "A networked Reversi-meets-Tetris remake of the classic NetFungus, on Cloudflare Workers + Durable Objects.",
+  "private": true,
+  "type": "module"
+}
