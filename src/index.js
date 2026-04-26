@@ -2,19 +2,19 @@
 //
 // Architecture:
 //   - The Worker (default export) routes incoming requests:
-//       /          -> serves index.html
-//       /ws?room=X -> upgrades to WebSocket and forwards to the Room DO
-//       /new       -> creates a new room code and redirects
+//       /          -> serves index.html (via [assets] binding)
+//       /ws        -> upgrades to WebSocket and forwards to the Room DO
 //   - Each room is a Durable Object instance. It holds the game state in memory
 //     while active and persists it to its built-in SQLite storage so it survives
-//     hibernation. WebSockets use the Hibernation API so we don't pay for idle time.
-//
-// The static client (public/index.html) is served via the [assets] binding
-// configured in wrangler.jsonc.
+//     hibernation. WebSockets use the Hibernation API.
 
 import { DurableObject } from "cloudflare:workers";
 
-const BOARD_SIZE = 16;
+// Configuration ranges (validated server-side)
+const MIN_BOARD = 8, MAX_BOARD = 24, DEFAULT_BOARD = 16;
+const MIN_INSET = 0, MAX_INSET = 4, DEFAULT_INSET = 1;
+const VALID_LOOKAHEAD = [0, 1, 3, 5];
+const DEFAULT_LOOKAHEAD = 0;
 
 // ---------- Tetromino shapes ----------
 const SHAPES = {
@@ -46,20 +46,27 @@ function makeBag() {
   return types;
 }
 
-function inBounds(x, y) {
-  return x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE;
+function topUpBag(bag, minCount) {
+  while (bag.length < minCount) {
+    bag.push(...makeBag());
+  }
+  return bag;
 }
 
-function validatePlacement(board, cells, playerNum) {
+function inBounds(x, y, size) {
+  return x >= 0 && x < size && y >= 0 && y < size;
+}
+
+function validatePlacement(board, cells, playerNum, size) {
   for (const [x, y] of cells) {
-    if (!inBounds(x, y)) return { ok: false, reason: "out of bounds" };
+    if (!inBounds(x, y, size)) return { ok: false, reason: "out of bounds" };
     if (board[y][x] !== 0) return { ok: false, reason: "cell occupied" };
   }
   let touchesOwn = false;
   for (const [x, y] of cells) {
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const nx = x + dx, ny = y + dy;
-      if (inBounds(nx, ny) && board[ny][nx] === playerNum) {
+      if (inBounds(nx, ny, size) && board[ny][nx] === playerNum) {
         touchesOwn = true;
         break;
       }
@@ -70,7 +77,7 @@ function validatePlacement(board, cells, playerNum) {
   return { ok: true };
 }
 
-function applyFlips(board, placedCells, playerNum) {
+function applyFlips(board, placedCells, playerNum, size) {
   const flipped = [];
   const dirs = [
     [1, 0], [-1, 0], [0, 1], [0, -1],
@@ -80,12 +87,12 @@ function applyFlips(board, placedCells, playerNum) {
     for (const [dx, dy] of dirs) {
       let x = px + dx, y = py + dy;
       const line = [];
-      while (inBounds(x, y) && board[y][x] !== 0 && board[y][x] !== playerNum) {
+      while (inBounds(x, y, size) && board[y][x] !== 0 && board[y][x] !== playerNum) {
         line.push([x, y]);
         x += dx;
         y += dy;
       }
-      if (line.length > 0 && inBounds(x, y) && board[y][x] === playerNum) {
+      if (line.length > 0 && inBounds(x, y, size) && board[y][x] === playerNum) {
         for (const [fx, fy] of line) {
           board[fy][fx] = playerNum;
           flipped.push([fx, fy]);
@@ -101,37 +108,38 @@ function hasLegalMove(game, playerIdx) {
   const pieceType = game.nextPiece[playerIdx];
   if (!pieceType) return false;
   const baseShape = SHAPES[pieceType];
+  const size = game.size;
   for (let r = 0; r < 4; r++) {
     const shape = rotate(baseShape, r);
-    for (let oy = 0; oy < BOARD_SIZE; oy++) {
-      for (let ox = 0; ox < BOARD_SIZE; ox++) {
+    for (let oy = 0; oy < size; oy++) {
+      for (let ox = 0; ox < size; ox++) {
         const cells = shape.map(([dx, dy]) => [ox + dx, oy + dy]);
-        if (validatePlacement(game.board, cells, playerNum).ok) return true;
+        if (validatePlacement(game.board, cells, playerNum, size).ok) return true;
       }
     }
   }
   return false;
 }
 
-function countCells(board, playerNum) {
+function countCells(board, playerNum, size) {
   let n = 0;
-  for (let y = 0; y < BOARD_SIZE; y++)
-    for (let x = 0; x < BOARD_SIZE; x++)
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++)
       if (board[y][x] === playerNum) n++;
   return n;
 }
 
-function newGame() {
-  const board = Array.from({ length: BOARD_SIZE }, () =>
-    Array(BOARD_SIZE).fill(0)
-  );
-  // Seed two players in opposite corners
-  board[1][1] = 1;
-  board[BOARD_SIZE - 2][BOARD_SIZE - 2] = 2;
+function newGame(settings) {
+  const { size, inset } = settings;
+  const board = Array.from({ length: size }, () => Array(size).fill(0));
+  board[inset][inset] = 1;
+  board[size - 1 - inset][size - 1 - inset] = 2;
   return {
+    size,
+    inset,
     board,
     turn: 0,
-    bags: [makeBag(), makeBag()],
+    bags: [topUpBag([], 12), topUpBag([], 12)],
     nextPiece: [null, null],
     moveLog: [],
     winner: null,
@@ -140,10 +148,25 @@ function newGame() {
 }
 
 function dealPiece(game, playerIdx) {
-  if (game.bags[playerIdx].length === 0) {
-    game.bags[playerIdx] = makeBag();
-  }
+  topUpBag(game.bags[playerIdx], 12);
   game.nextPiece[playerIdx] = game.bags[playerIdx].shift();
+}
+
+function clampInt(raw, lo, hi, fallback) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function validateSettings(raw) {
+  const size = clampInt(raw.size, MIN_BOARD, MAX_BOARD, DEFAULT_BOARD);
+  let inset = clampInt(raw.inset, MIN_INSET, MAX_INSET, DEFAULT_INSET);
+  // Keep at least 2 cells of separation between seeds for any size
+  const maxInsetForSize = Math.max(0, Math.floor((size - 2) / 2) - 1);
+  inset = Math.min(inset, maxInsetForSize);
+  let lookahead = parseInt(raw.lookahead, 10);
+  if (!VALID_LOOKAHEAD.includes(lookahead)) lookahead = DEFAULT_LOOKAHEAD;
+  return { size, inset, lookahead };
 }
 
 // ============================================================
@@ -154,11 +177,15 @@ export class Room extends DurableObject {
     super(ctx, env);
     this.ctx = ctx;
     this.env = env;
-    // Restore state from storage if hibernating-and-waking
     this.ctx.blockConcurrencyWhile(async () => {
       this.game = (await this.ctx.storage.get("game")) || null;
       this.names = (await this.ctx.storage.get("names")) || [];
       this.started = (await this.ctx.storage.get("started")) || false;
+      this.settings = (await this.ctx.storage.get("settings")) || {
+        size: DEFAULT_BOARD,
+        inset: DEFAULT_INSET,
+        lookahead: DEFAULT_LOOKAHEAD,
+      };
     });
   }
 
@@ -169,34 +196,39 @@ export class Room extends DurableObject {
       if (!upgrade || upgrade.toLowerCase() !== "websocket") {
         return new Response("expected websocket", { status: 426 });
       }
-      const name = url.searchParams.get("name") || "Player";
-      const role = url.searchParams.get("role") || "join"; // 'create' or 'join'
-      return this.handleConnect(name, role);
+      const name = (url.searchParams.get("name") || "Player").slice(0, 24);
+      const role = url.searchParams.get("role") || "join";
+
+      let creatorSettings = null;
+      if (role === "create") {
+        creatorSettings = validateSettings({
+          size: url.searchParams.get("size"),
+          inset: url.searchParams.get("inset"),
+          lookahead: url.searchParams.get("lookahead"),
+        });
+      }
+
+      return this.handleConnect(name, role, creatorSettings);
     }
     return new Response("not found", { status: 404 });
   }
 
-  async handleConnect(name, role) {
-    // Get currently connected sockets via the Hibernation API
+  async handleConnect(name, role, creatorSettings) {
     const sockets = this.ctx.getWebSockets();
 
     if (this.started && sockets.length >= 2) {
       return new Response("room full", { status: 403 });
     }
     if (role === "join" && sockets.length === 0 && !this.started) {
-      // Joining an empty room that was never created — disallow
-      // (the first connection should be 'create')
       return new Response("no such room", { status: 404 });
     }
 
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
 
-    // Determine player index
-    const playerIdx = sockets.length; // 0 or 1
+    const playerIdx = sockets.length;
     server.serializeAttachment({ playerIdx, name });
 
-    // Track in our names array for state broadcasts
     if (this.names.length <= playerIdx) {
       this.names.push(name);
     } else {
@@ -204,12 +236,15 @@ export class Room extends DurableObject {
     }
     await this.ctx.storage.put("names", this.names);
 
-    // Accept with hibernation
+    if (playerIdx === 0 && creatorSettings) {
+      this.settings = creatorSettings;
+      await this.ctx.storage.put("settings", this.settings);
+    }
+
     this.ctx.acceptWebSocket(server);
 
-    // If this is the second player, start the game
     if (playerIdx === 1 && !this.started) {
-      this.game = newGame();
+      this.game = newGame(this.settings);
       dealPiece(this.game, 0);
       dealPiece(this.game, 1);
       this.started = true;
@@ -217,9 +252,7 @@ export class Room extends DurableObject {
       await this.ctx.storage.put("started", true);
     }
 
-    // Send initial state
     server.send(JSON.stringify(this.publicState(playerIdx)));
-    // Notify other players too
     this.broadcastState();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -231,20 +264,29 @@ export class Room extends DurableObject {
         type: "lobby",
         names: this.names,
         yourIndex: perspectivePlayerIdx,
+        settings: this.settings,
       };
     }
+    const lookahead = this.settings.lookahead || 0;
+    const myUpcoming = (perspectivePlayerIdx != null && lookahead > 0)
+      ? this.game.bags[perspectivePlayerIdx].slice(0, lookahead)
+      : [];
+
     return {
       type: "state",
       names: this.names,
+      settings: this.settings,
       board: this.game.board,
+      size: this.game.size,
       turn: this.game.turn,
       nextPiece: this.game.nextPiece,
+      upcoming: myUpcoming,
       yourIndex: perspectivePlayerIdx,
       finished: this.game.finished,
       winner: this.game.winner,
       counts: [
-        countCells(this.game.board, 1),
-        countCells(this.game.board, 2),
+        countCells(this.game.board, 1, this.game.size),
+        countCells(this.game.board, 2, this.game.size),
       ],
       moveLog: this.game.moveLog.slice(-20),
     };
@@ -258,7 +300,7 @@ export class Room extends DurableObject {
       try {
         ws.send(JSON.stringify(this.publicState(att.playerIdx)));
       } catch (e) {
-        // Socket dead; ignore
+        // dead socket; ignore
       }
     }
   }
@@ -282,7 +324,7 @@ export class Room extends DurableObject {
     }
 
     if (msg.type === "rematch") {
-      this.game = newGame();
+      this.game = newGame(this.settings);
       dealPiece(this.game, 0);
       dealPiece(this.game, 1);
       await this.ctx.storage.put("game", this.game);
@@ -303,11 +345,11 @@ export class Room extends DurableObject {
     const cells = shape.map(([dx, dy]) => [msg.x + dx, msg.y + dy]);
     const playerNum = playerIdx + 1;
 
-    const v = validatePlacement(g.board, cells, playerNum);
+    const v = validatePlacement(g.board, cells, playerNum, g.size);
     if (!v.ok) return { error: v.reason };
 
     for (const [x, y] of cells) g.board[y][x] = playerNum;
-    const flipped = applyFlips(g.board, cells, playerNum);
+    const flipped = applyFlips(g.board, cells, playerNum, g.size);
 
     g.moveLog.push({
       player: playerIdx,
@@ -318,14 +360,12 @@ export class Room extends DurableObject {
       flipped: flipped.length,
     });
 
-    // Advance turn
     g.turn = (g.turn + 1) % 2;
     dealPiece(g, g.turn);
 
-    // End conditions
     const counts = [
-      countCells(g.board, 1),
-      countCells(g.board, 2),
+      countCells(g.board, 1, g.size),
+      countCells(g.board, 2, g.size),
     ];
     const alive = counts.map((c, i) => (c > 0 ? i : -1)).filter((i) => i >= 0);
     if (alive.length === 1) {
@@ -357,7 +397,6 @@ export class Room extends DurableObject {
       this.game.finished = true;
       this.game.winner = att.playerIdx === 0 ? 1 : 0;
       await this.ctx.storage.put("game", this.game);
-      // Notify any remaining sockets
       const sockets = this.ctx.getWebSockets();
       for (const other of sockets) {
         if (other !== ws) {
@@ -373,7 +412,6 @@ export class Room extends DurableObject {
   }
 
   async webSocketError(ws, error) {
-    // Same as close
     await this.webSocketClose(ws, 1011, "error", false);
   }
 }
@@ -381,20 +419,10 @@ export class Room extends DurableObject {
 // ============================================================
 // Worker: routes HTTP requests
 // ============================================================
-function makeRoomCode() {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 4; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
-}
-
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // WebSocket connection: /ws?room=XXXX&name=...&role=create|join
     if (url.pathname === "/ws") {
       const room = (url.searchParams.get("room") || "").toUpperCase();
       if (!/^[A-Z2-9]{4}$/.test(room)) {
@@ -402,19 +430,11 @@ export default {
       }
       const id = env.ROOM.idFromName(room);
       const stub = env.ROOM.get(id);
-      // Forward to the DO
       const doUrl = new URL(request.url);
       doUrl.pathname = "/connect";
       return stub.fetch(doUrl.toString(), request);
     }
 
-    // Generate a fresh code: GET /new -> { code }
-    if (url.pathname === "/new") {
-      // The client picks a code locally; this endpoint just returns one for convenience
-      return Response.json({ code: makeRoomCode() });
-    }
-
-    // Otherwise, serve static assets
     return env.ASSETS.fetch(request);
   },
 };
