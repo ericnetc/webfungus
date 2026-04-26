@@ -3,23 +3,27 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>NETFUNGUS // colony 0.1</title>
+<title>NETFUNGUS // colony 0.2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=VT323&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0a0d08;
-    --bg-deep: #050704;
-    --grid: #1a2614;
-    --p1: #d4a017;
-    --p1-glow: #ffd24a;
-    --p2: #5fb84a;
-    --p2-glow: #9eff6e;
-    --text: #c9b87a;
-    --text-dim: #6b6342;
-    --warn: #c44b2c;
-    --crt-line: rgba(255, 220, 130, 0.04);
+    /* Higher contrast palette — board is now noticeably lighter,
+       cells are saturated, grid lines are visible. */
+    --bg: #1f2419;
+    --bg-deep: #161a12;
+    --board-bg: #2a3122;
+    --grid: #4a5439;
+    --grid-strong: #6b7853;
+    --p1: #f4c430;            /* amber, brighter */
+    --p1-glow: #ffe066;
+    --p2: #7ed957;            /* spore green, brighter */
+    --p2-glow: #b5ff8f;
+    --text: #e8dba8;
+    --text-dim: #8a8060;
+    --warn: #e85a3a;
+    --crt-line: rgba(255, 230, 140, 0.05);
   }
 
   * { box-sizing: border-box; }
@@ -55,14 +59,14 @@
     inset: 0;
     pointer-events: none;
     background: radial-gradient(ellipse at center,
-      transparent 30%,
-      rgba(0, 0, 0, 0.55) 100%);
+      transparent 40%,
+      rgba(0, 0, 0, 0.4) 100%);
     z-index: 9998;
   }
 
   .app {
     display: grid;
-    grid-template-columns: 320px 1fr 280px;
+    grid-template-columns: 340px 1fr 280px;
     grid-template-rows: 48px 1fr 36px;
     grid-template-areas:
       "header header header"
@@ -141,10 +145,23 @@
     text-shadow: 0 0 6px var(--p1-glow);
     letter-spacing: 3px;
     margin: 0 0 14px;
-    border-bottom: 1px dashed var(--grid);
+    border-bottom: 1px dashed var(--grid-strong);
     padding-bottom: 10px;
   }
-  .field { margin-bottom: 14px; }
+  .panel-section {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--grid-strong);
+  }
+  .panel-section-title {
+    font-family: "VT323", monospace;
+    font-size: 16px;
+    color: var(--text-dim);
+    letter-spacing: 3px;
+    margin: 0 0 10px;
+  }
+
+  .field { margin-bottom: 12px; }
   .field label {
     display: block;
     font-size: 11px;
@@ -153,10 +170,12 @@
     letter-spacing: 2px;
     margin-bottom: 4px;
   }
-  .field input {
+  .field input[type=text],
+  .field input:not([type]),
+  .field select {
     width: 100%;
     background: var(--bg-deep);
-    border: 1px solid var(--grid);
+    border: 1px solid var(--grid-strong);
     color: var(--text);
     font-family: inherit;
     padding: 8px 10px;
@@ -164,7 +183,7 @@
     outline: none;
     letter-spacing: 1px;
   }
-  .field input:focus {
+  .field input:focus, .field select:focus {
     border-color: var(--p1);
     box-shadow: 0 0 0 1px var(--p1) inset;
   }
@@ -174,6 +193,46 @@
     font-size: 18px;
     text-align: center;
   }
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .field-row .field { margin-bottom: 0; }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .checkbox-row input[type=checkbox] {
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--grid-strong);
+    background: var(--bg-deep);
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .checkbox-row input[type=checkbox]:checked {
+    border-color: var(--p1);
+    background: var(--bg-deep);
+  }
+  .checkbox-row input[type=checkbox]:checked::after {
+    content: "▓";
+    position: absolute;
+    top: -3px;
+    left: 1px;
+    color: var(--p1);
+    font-size: 14px;
+    line-height: 1;
+  }
+
   button.act {
     display: block;
     width: 100%;
@@ -194,11 +253,15 @@
     color: var(--bg-deep);
     text-shadow: none;
   }
-  button.act:disabled {
-    border-color: var(--text-dim);
-    color: var(--text-dim);
-    cursor: not-allowed;
+  button.act.secondary {
+    border-color: var(--p2);
+    color: var(--p2);
   }
+  button.act.secondary:hover {
+    background: var(--p2);
+    color: var(--bg-deep);
+  }
+
   .or-divider {
     text-align: center;
     color: var(--text-dim);
@@ -213,7 +276,7 @@
   }
 
   .player-card {
-    border: 1px solid var(--grid);
+    border: 1px solid var(--grid-strong);
     padding: 10px 12px;
     margin-bottom: 10px;
     position: relative;
@@ -242,6 +305,7 @@
     color: var(--text);
     margin-bottom: 4px;
     letter-spacing: 1px;
+    word-wrap: break-word;
   }
   .player-card.p1 .name { color: var(--p1); }
   .player-card.p2 .name { color: var(--p2); }
@@ -258,7 +322,7 @@
   .piece-display {
     margin-top: 18px;
     padding: 14px;
-    border: 1px dashed var(--grid);
+    border: 1px dashed var(--grid-strong);
     text-align: center;
   }
   .piece-display .label {
@@ -281,21 +345,63 @@
   }
   .piece-display .hint kbd {
     background: var(--bg-deep);
-    border: 1px solid var(--grid);
+    border: 1px solid var(--grid-strong);
     padding: 1px 5px;
     color: var(--text);
     font-family: inherit;
     font-size: 10px;
   }
 
+  .upcoming-display {
+    margin-top: 14px;
+    padding: 10px;
+    border: 1px dashed var(--grid-strong);
+  }
+  .upcoming-display .label {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    text-align: center;
+  }
+  .upcoming-row {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .upcoming-row svg {
+    width: 44px;
+    height: 28px;
+    background: var(--bg-deep);
+    border: 1px solid var(--grid);
+    padding: 2px;
+  }
+  .upcoming-row .arrow {
+    color: var(--text-dim);
+    font-size: 10px;
+    margin: 0 2px;
+  }
+
+  .room-info {
+    margin-top: 14px;
+    padding: 8px 10px;
+    background: var(--bg-deep);
+    border: 1px solid var(--grid-strong);
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 1.5px;
+    line-height: 1.6;
+  }
+  .room-info .row { display: flex; justify-content: space-between; }
+  .room-info strong { color: var(--text); font-weight: normal; }
+
   #board {
     display: block;
     image-rendering: pixelated;
-    background:
-      radial-gradient(circle at 30% 20%, rgba(212, 160, 23, 0.04), transparent 50%),
-      radial-gradient(circle at 75% 80%, rgba(95, 184, 74, 0.04), transparent 50%),
-      var(--bg-deep);
-    border: 1px solid var(--grid);
+    background: var(--board-bg);
+    border: 1px solid var(--grid-strong);
     cursor: crosshair;
   }
 
@@ -314,7 +420,7 @@
   .game-over {
     position: absolute;
     inset: 0;
-    background: rgba(5, 7, 4, 0.85);
+    background: rgba(22, 26, 18, 0.88);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -396,33 +502,80 @@
   </header>
 
   <aside class="sidebar" id="sidebar">
+    <!-- LOBBY -->
     <div id="lobby">
       <h2 class="panel-title">// initialize</h2>
       <div class="field">
-        <label>operator name</label>
-        <input id="nameInput" maxlength="16" placeholder="anonymous" />
+        <label>your name</label>
+        <input id="nameInput" maxlength="24" placeholder="enter your name" />
       </div>
-      <button class="act" id="createBtn">Create New Colony</button>
+
+      <div class="panel-section">
+        <h3 class="panel-section-title">// new colony settings</h3>
+        <div class="field-row">
+          <div class="field">
+            <label>grid size</label>
+            <select id="sizeSelect">
+              <option value="8">8 × 8</option>
+              <option value="10">10 × 10</option>
+              <option value="12">12 × 12</option>
+              <option value="14">14 × 14</option>
+              <option value="16" selected>16 × 16</option>
+              <option value="18">18 × 18</option>
+              <option value="20">20 × 20</option>
+              <option value="24">24 × 24</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>start inset</label>
+            <select id="insetSelect">
+              <option value="0">corner (0)</option>
+              <option value="1" selected>1 in</option>
+              <option value="2">2 in</option>
+              <option value="3">3 in</option>
+              <option value="4">4 in</option>
+            </select>
+          </div>
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="lookaheadToggle" />
+          <span>show upcoming pieces</span>
+        </label>
+        <div class="field" id="lookaheadCountField" style="display:none;">
+          <label>how many to show</label>
+          <select id="lookaheadCount">
+            <option value="1">1 piece</option>
+            <option value="3" selected>3 pieces</option>
+            <option value="5">5 pieces</option>
+          </select>
+        </div>
+        <button class="act" id="createBtn">Create New Colony</button>
+      </div>
+
       <div class="or-divider">or</div>
+
       <div class="field">
         <label>room code</label>
         <input id="codeInput" class="code-input" maxlength="4" placeholder="XXXX" />
       </div>
-      <button class="act" id="joinBtn">Join Existing</button>
+      <button class="act secondary" id="joinBtn">Join Existing</button>
       <div class="err" id="lobbyErr"></div>
     </div>
 
+    <!-- WAITING -->
     <div id="waiting" class="hidden">
       <h2 class="panel-title">// waiting</h2>
       <p style="font-size:12px;color:var(--text-dim);line-height:1.6;">
-        Share this code with another operator:
+        Share this code with another player:
       </p>
       <div style="font-family:'VT323',monospace;font-size:48px;text-align:center;letter-spacing:8px;color:var(--p1);text-shadow:0 0 12px var(--p1-glow);margin:10px 0;" id="waitCode">────</div>
       <p style="font-size:11px;color:var(--text-dim);text-align:center;letter-spacing:2px;">
         connection pending…
       </p>
+      <div class="room-info" id="waitInfo"></div>
     </div>
 
+    <!-- IN-GAME -->
     <div id="gameInfo" class="hidden">
       <h2 class="panel-title">// colonies</h2>
       <div id="playerCards"></div>
@@ -435,6 +588,13 @@
           <kbd>R</kbd> rotate &nbsp;·&nbsp; <kbd>Click</kbd> place
         </div>
       </div>
+
+      <div class="upcoming-display hidden" id="upcomingDisplay">
+        <div class="label">UPCOMING</div>
+        <div class="upcoming-row" id="upcomingRow"></div>
+      </div>
+
+      <div class="room-info" id="gameRoomInfo"></div>
     </div>
   </aside>
 
@@ -460,7 +620,6 @@
 </div>
 
 <script>
-const BOARD_SIZE = 16;
 const SHAPES = {
   I: [[0,0],[1,0],[2,0],[3,0]],
   O: [[0,0],[1,0],[0,1],[1,1]],
@@ -485,6 +644,7 @@ let lastState = null;
 let hover = { x: -1, y: -1 };
 let rotation = 0;
 let myRoom = null;
+let boardSize = 16; // updated from server state
 
 function makeCode() {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -494,10 +654,15 @@ function makeCode() {
   return s;
 }
 
-function connect(room, name, role) {
-  myRoom = room;
+function buildWsUrl(room, name, role, extra = {}) {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${proto}//${location.host}/ws?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}&role=${role}`;
+  const params = new URLSearchParams({ room, name, role, ...extra });
+  return `${proto}//${location.host}/ws?${params.toString()}`;
+}
+
+function connect(room, name, role, extra = {}) {
+  myRoom = room;
+  const url = buildWsUrl(room, name, role, extra);
   ws = new WebSocket(url);
   ws.onopen = () => {
     document.getElementById("connStatus").textContent = "● connected";
@@ -507,10 +672,8 @@ function connect(room, name, role) {
     document.getElementById("connStatus").textContent = "○ disconnected";
     document.getElementById("connStatus").style.color = "var(--warn)";
     if (!lastState && e.code !== 1000) {
-      // Connection failed before any state — show error
       document.getElementById("lobbyErr").textContent =
         e.reason || "connection failed (room may not exist or be full)";
-      // Reset to lobby
       document.getElementById("lobby").classList.remove("hidden");
       document.getElementById("waiting").classList.add("hidden");
       document.getElementById("gameInfo").classList.add("hidden");
@@ -524,13 +687,15 @@ function connect(room, name, role) {
     }
     if (msg.type === "lobby") {
       myIndex = msg.yourIndex;
-      enterWaiting(myRoom);
+      enterWaiting(myRoom, msg.settings);
       return;
     }
     if (msg.type === "state") {
       myIndex = msg.yourIndex;
       lastState = msg;
+      boardSize = msg.size;
       enterGame();
+      fitCanvas();
       render();
       return;
     }
@@ -548,13 +713,32 @@ function send(obj) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
 }
 
+document.getElementById("lookaheadToggle").addEventListener("change", (e) => {
+  document.getElementById("lookaheadCountField").style.display =
+    e.target.checked ? "block" : "none";
+});
+
 document.getElementById("createBtn").onclick = () => {
-  const name = document.getElementById("nameInput").value.trim() || "Player 1";
+  const name = document.getElementById("nameInput").value.trim();
+  if (!name) {
+    document.getElementById("lobbyErr").textContent = "please enter your name";
+    return;
+  }
+  const size = document.getElementById("sizeSelect").value;
+  const inset = document.getElementById("insetSelect").value;
+  const lookaheadOn = document.getElementById("lookaheadToggle").checked;
+  const lookahead = lookaheadOn
+    ? document.getElementById("lookaheadCount").value
+    : "0";
   const code = makeCode();
-  connect(code, name, "create");
+  connect(code, name, "create", { size, inset, lookahead });
 };
 document.getElementById("joinBtn").onclick = () => {
-  const name = document.getElementById("nameInput").value.trim() || "Player 2";
+  const name = document.getElementById("nameInput").value.trim();
+  if (!name) {
+    document.getElementById("lobbyErr").textContent = "please enter your name";
+    return;
+  }
   const code = document.getElementById("codeInput").value.trim().toUpperCase();
   if (code.length !== 4) {
     document.getElementById("lobbyErr").textContent = "code must be 4 characters";
@@ -567,18 +751,30 @@ document.getElementById("codeInput").addEventListener("input", (e) => {
 });
 document.getElementById("rematchBtn").onclick = () => send({ type: "rematch" });
 
-function enterWaiting(code) {
+function settingsHtml(s) {
+  if (!s) return "";
+  const la = s.lookahead > 0 ? `${s.lookahead} piece${s.lookahead > 1 ? "s" : ""}` : "off";
+  return (
+    `<div class="row"><span>grid</span><strong>${s.size} × ${s.size}</strong></div>` +
+    `<div class="row"><span>start inset</span><strong>${s.inset}</strong></div>` +
+    `<div class="row"><span>lookahead</span><strong>${la}</strong></div>`
+  );
+}
+
+function enterWaiting(code, settings) {
   document.getElementById("lobby").classList.add("hidden");
   document.getElementById("waiting").classList.remove("hidden");
   document.getElementById("gameInfo").classList.add("hidden");
   document.getElementById("waitCode").textContent = code;
   document.getElementById("roomCodeDisplay").innerHTML = "ROOM <span>" + code + "</span>";
+  document.getElementById("waitInfo").innerHTML = settingsHtml(settings);
 }
 function enterGame() {
   document.getElementById("lobby").classList.add("hidden");
   document.getElementById("waiting").classList.add("hidden");
   document.getElementById("gameInfo").classList.remove("hidden");
   document.getElementById("roomCodeDisplay").innerHTML = "ROOM <span>" + myRoom + "</span>";
+  document.getElementById("gameRoomInfo").innerHTML = settingsHtml(lastState.settings);
 }
 
 const canvas = document.getElementById("board");
@@ -589,7 +785,7 @@ function fitCanvas() {
   const wrap = document.querySelector(".board-wrap");
   const size = Math.min(wrap.clientWidth - 40, wrap.clientHeight - 40, 720);
   canvas.width = canvas.height = size;
-  CELL = size / BOARD_SIZE;
+  CELL = size / boardSize;
   if (lastState) render();
 }
 window.addEventListener("resize", fitCanvas);
@@ -612,36 +808,40 @@ function render() {
   if (!lastState) return;
   const { board, turn, nextPiece, finished } = lastState;
 
-  ctx.fillStyle = getCSS("--bg-deep");
+  // Higher contrast board background
+  ctx.fillStyle = getCSS("--board-bg");
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.strokeStyle = getCSS("--grid");
+  // Stronger grid lines
+  ctx.strokeStyle = getCSS("--grid-strong");
   ctx.lineWidth = 1;
-  for (let i = 0; i <= BOARD_SIZE; i++) {
+  for (let i = 0; i <= boardSize; i++) {
     ctx.beginPath();
     ctx.moveTo(i * CELL, 0);
-    ctx.lineTo(i * CELL, BOARD_SIZE * CELL);
+    ctx.lineTo(i * CELL, boardSize * CELL);
     ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(0, i * CELL);
-    ctx.lineTo(BOARD_SIZE * CELL, i * CELL);
+    ctx.lineTo(boardSize * CELL, i * CELL);
     ctx.stroke();
   }
 
-  for (let y = 0; y < BOARD_SIZE; y++) {
-    for (let x = 0; x < BOARD_SIZE; x++) {
+  // Cells
+  for (let y = 0; y < boardSize; y++) {
+    for (let x = 0; x < boardSize; x++) {
       const v = board[y][x];
       if (v === 0) continue;
-      drawCell(x, y, v, 1);
+      drawCell(x, y, v);
     }
   }
 
+  // Hover ghost
   if (!finished && turn === myIndex && hover.x >= 0 && nextPiece[myIndex]) {
     const shape = rotate(SHAPES[nextPiece[myIndex]], rotation);
     const cells = shape.map(([dx, dy]) => [hover.x + dx, hover.y + dy]);
     const valid = checkValid(cells, myIndex + 1, board);
     for (const [x, y] of cells) {
-      if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) continue;
+      if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) continue;
       const color = valid ? colorFor(myIndex + 1) : getCSS("--warn");
       drawCellGhost(x, y, color);
     }
@@ -652,24 +852,23 @@ function render() {
   updateGameOver();
 }
 
-function drawCell(x, y, playerNum, alpha) {
+function drawCell(x, y, playerNum) {
   const px = x * CELL;
   const py = y * CELL;
   const color = colorFor(playerNum);
   const glow = glowFor(playerNum);
 
+  // Solid filled cell — no inset hole, much higher contrast than before
   ctx.shadowColor = glow;
-  ctx.shadowBlur = CELL * 0.4;
+  ctx.shadowBlur = CELL * 0.35;
   ctx.fillStyle = color;
-  ctx.globalAlpha = alpha * 0.85;
   ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
-
   ctx.shadowBlur = 0;
-  ctx.fillStyle = getCSS("--bg-deep");
-  ctx.globalAlpha = alpha * 0.4;
-  const inset = CELL * 0.28;
-  ctx.fillRect(px + inset, py + inset, CELL - inset * 2, CELL - inset * 2);
 
+  // Subtle highlight on top edge for depth
+  ctx.fillStyle = glow;
+  ctx.globalAlpha = 0.3;
+  ctx.fillRect(px + 2, py + 2, CELL - 4, Math.max(2, CELL * 0.12));
   ctx.globalAlpha = 1;
 }
 
@@ -678,10 +877,10 @@ function drawCellGhost(x, y, color) {
   const py = y * CELL;
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
-  ctx.globalAlpha = 0.9;
+  ctx.globalAlpha = 0.95;
   ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
   ctx.fillStyle = color;
-  ctx.globalAlpha = 0.2;
+  ctx.globalAlpha = 0.25;
   ctx.fillRect(px + 3, py + 3, CELL - 6, CELL - 6);
   ctx.globalAlpha = 1;
 }
@@ -689,19 +888,31 @@ function drawCellGhost(x, y, color) {
 function checkValid(cells, playerNum, board) {
   let touches = false;
   for (const [x, y] of cells) {
-    if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) return false;
+    if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return false;
     if (board[y][x] !== 0) return false;
   }
   for (const [x, y] of cells) {
     for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
       const nx = x + dx, ny = y + dy;
-      if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE
+      if (nx >= 0 && nx < boardSize && ny >= 0 && ny < boardSize
           && board[ny][nx] === playerNum) {
         touches = true;
       }
     }
   }
   return touches;
+}
+
+function pieceSvg(pieceType, w, h, color, padding = 2) {
+  const shape = rotate(SHAPES[pieceType], 0);
+  const sw = Math.max(...shape.map(([x])=>x)) + 1;
+  const sh = Math.max(...shape.map(([,y])=>y)) + 1;
+  const size = Math.min((w - padding*2) / sw, (h - padding*2) / sh);
+  const ox = (w - sw * size) / 2;
+  const oy = (h - sh * size) / 2;
+  return shape.map(([x, y]) =>
+    `<rect x="${ox + x*size + 1}" y="${oy + y*size + 1}" width="${size-2}" height="${size-2}" fill="${color}" opacity="0.9"/>`
+  ).join("");
 }
 
 function updateSidebar() {
@@ -718,6 +929,7 @@ function updateSidebar() {
     cards.appendChild(card);
   });
 
+  // Current piece preview (rotates with R key)
   const svg = document.getElementById("pieceSvg");
   const myPiece = lastState.nextPiece[myIndex];
   if (myPiece) {
@@ -731,6 +943,21 @@ function updateSidebar() {
     svg.innerHTML = shape.map(([x, y]) =>
       `<rect x="${ox + x*size + 2}" y="${oy + y*size + 2}" width="${size-4}" height="${size-4}" fill="${color}" opacity="0.9"/>`
     ).join("");
+  }
+
+  // Upcoming pieces preview (only shown if room has lookahead enabled)
+  const upDisplay = document.getElementById("upcomingDisplay");
+  const upRow = document.getElementById("upcomingRow");
+  if (lastState.upcoming && lastState.upcoming.length > 0) {
+    upDisplay.classList.remove("hidden");
+    const color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
+    const items = lastState.upcoming.map((p, i) => {
+      return `<svg viewBox="0 0 44 28">${pieceSvg(p, 44, 28, color)}</svg>` +
+             (i < lastState.upcoming.length - 1 ? '<span class="arrow">›</span>' : '');
+    });
+    upRow.innerHTML = items.join("");
+  } else {
+    upDisplay.classList.add("hidden");
   }
 
   const status = document.getElementById("boardStatus");
@@ -753,12 +980,13 @@ function updateLog() {
     const turnNum = lastState.moveLog.length - i;
     const div = document.createElement("div");
     div.className = "log-entry p" + (entry.player + 1);
+    const playerName = lastState.names[entry.player] || ("P" + (entry.player + 1));
     if (entry.skipped) {
-      div.innerHTML = `<span class="turn-num">${String(turnNum).padStart(3,"0")}</span> · <span class="who">P${entry.player + 1}</span> skipped — no legal move`;
+      div.innerHTML = `<span class="turn-num">${String(turnNum).padStart(3,"0")}</span> · <span class="who">${escapeHtml(playerName)}</span> skipped — no legal move`;
     } else {
       const flipText = entry.flipped > 0
         ? ` · <span class="flip">+${entry.flipped} flipped</span>` : "";
-      div.innerHTML = `<span class="turn-num">${String(turnNum).padStart(3,"0")}</span> · <span class="who">P${entry.player + 1}</span> placed ${entry.piece} @ ${entry.x},${entry.y}${flipText}`;
+      div.innerHTML = `<span class="turn-num">${String(turnNum).padStart(3,"0")}</span> · <span class="who">${escapeHtml(playerName)}</span> placed ${entry.piece} @ ${entry.x},${entry.y}${flipText}`;
     }
     list.appendChild(div);
   });
