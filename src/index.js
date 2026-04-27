@@ -221,31 +221,77 @@ function processOrphans(board, heads, size, orphanFate) {
   return result;
 }
 
+// Head capture rule: the head is captured when the contiguous line of my color
+// (including the head itself) along ANY of the 4 axes — horizontal, vertical,
+// NW-SE diagonal, NE-SW diagonal — is bracketed at BOTH ends by enemy cells.
+//
+// Example: row 5 has my cells at x=2,3,4,5,6 (head at x=5), and enemy at x=1
+// and x=7. The whole line (including the head) would be Othello-flippable.
+// Game over.
+//
+// We don't actually need to check that the enemy could currently *cause* this
+// flip via placement — the *condition* of the line being bracketed is itself
+// the loss condition.
 function isHeadCaptured(board, head, size) {
-  const enemy = head.playerNum === 1 ? 2 : 1;
-  const at = (dx, dy) => {
-    const x = head.x + dx, y = head.y + dy;
-    if (!inBounds(x, y, size)) return null;
-    return board[y][x];
+  const own = head.playerNum;
+  const enemy = own === 1 ? 2 : 1;
+  // The 4 axes as (dx,dy) pairs (one direction; we walk both ways)
+  const AXES = [
+    [1, 0],   // horizontal
+    [0, 1],   // vertical
+    [1, 1],   // NW-SE diagonal
+    [1, -1],  // NE-SW diagonal
+  ];
+  // Helper: at (x,y), is cell my color? (Head counts as own.)
+  const isOwn = (x, y) => {
+    if (!inBounds(x, y, size)) return false;
+    return board[y][x] === own;
   };
-  const ns = at(0, -1) === enemy && at(0, 1) === enemy;
-  const ew = at(-1, 0) === enemy && at(1, 0) === enemy;
-  return ns || ew;
+  const isEnemy = (x, y) => {
+    if (!inBounds(x, y, size)) return false;
+    return board[y][x] === enemy;
+  };
+
+  for (const [dx, dy] of AXES) {
+    // Walk in +direction from head until we leave my color
+    let fx = head.x + dx, fy = head.y + dy;
+    while (isOwn(fx, fy)) { fx += dx; fy += dy; }
+    // (fx, fy) is now the first non-own cell. For capture, it must be enemy.
+    const forwardBracketed = isEnemy(fx, fy);
+
+    // Walk in -direction from head until we leave my color
+    let bx = head.x - dx, by = head.y - dy;
+    while (isOwn(bx, by)) { bx -= dx; by -= dy; }
+    const backwardBracketed = isEnemy(bx, by);
+
+    if (forwardBracketed && backwardBracketed) return true;
+  }
+  return false;
 }
 
+// Threat level: how many of the 4 axes have at least one enemy "in line."
+// Returns 3 if any axis is fully bracketed (would be captured), otherwise the
+// count of axes with at least partial threat.
 function headThreatLevel(board, head, size) {
-  const enemy = head.playerNum === 1 ? 2 : 1;
-  const at = (dx, dy) => {
-    const x = head.x + dx, y = head.y + dy;
-    if (!inBounds(x, y, size)) return null;
-    return board[y][x];
-  };
-  const n = at(0, -1) === enemy ? 1 : 0;
-  const s = at(0, 1) === enemy ? 1 : 0;
-  const e = at(1, 0) === enemy ? 1 : 0;
-  const w = at(-1, 0) === enemy ? 1 : 0;
-  if ((n && s) || (e && w)) return 3;
-  return n + s + e + w;
+  const own = head.playerNum;
+  const enemy = own === 1 ? 2 : 1;
+  const AXES = [[1,0],[0,1],[1,1],[1,-1]];
+  const isOwn = (x, y) => inBounds(x, y, size) && board[y][x] === own;
+  const isEnemy = (x, y) => inBounds(x, y, size) && board[y][x] === enemy;
+  let threatened = 0;
+  let captured = false;
+  for (const [dx, dy] of AXES) {
+    let fx = head.x + dx, fy = head.y + dy;
+    while (isOwn(fx, fy)) { fx += dx; fy += dy; }
+    const f = isEnemy(fx, fy);
+    let bx = head.x - dx, by = head.y - dy;
+    while (isOwn(bx, by)) { bx -= dx; by -= dy; }
+    const b = isEnemy(bx, by);
+    if (f && b) captured = true;
+    if (f || b) threatened++;
+  }
+  if (captured) return 3;
+  return threatened;
 }
 
 function hasLegalMove(game, playerIdx) {
@@ -313,6 +359,8 @@ function newGame(settings) {
     bags: [topUpBag([], 12), topUpBag([], 12)],
     nextPiece: [null, null],
     bitesRemaining: [STARTING_BITES, STARTING_BITES],
+    consecutivePasses: 0,
+    lastEvents: null,  // events from the most recent move (for client animation)
     moveLog: [],
     winner: null,
     finished: false,
@@ -451,6 +499,8 @@ export class Room extends DurableObject {
         countCells(this.game.board, 2, this.game.size),
       ],
       moveLog: this.game.moveLog.slice(-25),
+      lastEvents: this.game.lastEvents,
+      consecutivePasses: this.game.consecutivePasses || 0,
     };
   }
 
@@ -489,6 +539,20 @@ export class Room extends DurableObject {
       this.game = newGame(this.settings);
       dealPiece(this.game, 0);
       dealPiece(this.game, 1);
+      await this.ctx.storage.put("game", this.game);
+      this.broadcastState();
+      return;
+    }
+    if (msg.type === "pass") {
+      const r = this.handlePass(playerIdx);
+      if (r.error) { ws.send(JSON.stringify({ type: "error", error: r.error })); return; }
+      await this.ctx.storage.put("game", this.game);
+      this.broadcastState();
+      return;
+    }
+    if (msg.type === "resign") {
+      const r = this.handleResign(playerIdx);
+      if (r.error) { ws.send(JSON.stringify({ type: "error", error: r.error })); return; }
       await this.ctx.storage.put("game", this.game);
       this.broadcastState();
       return;
@@ -542,12 +606,21 @@ export class Room extends DurableObject {
     // 1) Place piece
     for (const [x, y] of cells) g.board[y][x] = playerNum;
 
-    // 2) Capture chain (opposite-side flanks, until stable)
+    // 2) Capture chain
     const flipped = captureFlanked(g.board, playerNum, g.size, g.heads);
 
     // 3) Orphan check — convert orphaned enemy cells to mine
     const { orphansP1, orphansP2 } = processOrphans(g.board, g.heads, g.size, "convert");
-    const converted = playerNum === 1 ? orphansP2.length : orphansP1.length;
+    const convertedCells = playerNum === 1 ? orphansP2 : orphansP1;
+
+    g.consecutivePasses = 0;
+    g.lastEvents = {
+      kind: "place",
+      player: playerIdx,
+      placed: cells,           // cells of the just-placed piece
+      flipped,                 // cells flipped by Othello rule
+      converted: convertedCells, // orphan cells absorbed into the mover's color
+    };
 
     g.moveLog.push({
       player: playerIdx,
@@ -556,7 +629,7 @@ export class Room extends DurableObject {
       y: msg.y,
       rotation: msg.rotation || 0,
       flipped: flipped.length,
-      converted,
+      converted: convertedCells.length,
     });
 
     this.resolveEndOfTurn();
@@ -578,17 +651,62 @@ export class Room extends DurableObject {
 
     // 2) Orphan check — orphaned cells DIE (become empty)
     const { orphansP1, orphansP2 } = processOrphans(g.board, g.heads, g.size, "die");
-    const killed = playerNum === 1 ? orphansP2.length : orphansP1.length;
+    const killedCells = playerNum === 1 ? orphansP2 : orphansP1;
+
+    g.consecutivePasses = 0;
+    g.lastEvents = {
+      kind: "bite",
+      player: playerIdx,
+      bitten: [msg.x, msg.y],
+      killed: killedCells,
+    };
 
     g.moveLog.push({
       player: playerIdx,
       bite: true,
       x: msg.x,
       y: msg.y,
-      killed,
+      killed: killedCells.length,
     });
 
     this.resolveEndOfTurn();
+    return { ok: true };
+  }
+
+  handlePass(playerIdx) {
+    const g = this.game;
+    if (!g || g.finished) return { error: "game not active" };
+    if (g.turn !== playerIdx) return { error: "not your turn" };
+    g.consecutivePasses = (g.consecutivePasses || 0) + 1;
+    g.lastEvents = { kind: "pass", player: playerIdx };
+    g.moveLog.push({ player: playerIdx, passed: true });
+
+    if (g.consecutivePasses >= 2) {
+      // Cat's game — both players passed in succession
+      g.finished = true;
+      g.endReason = "mutual_pass";
+      const near = g.heads.map(h => countCellsNearHead(g.board, h, g.size));
+      if (near[0] > near[1]) g.winner = 0;
+      else if (near[1] > near[0]) g.winner = 1;
+      else g.winner = -1;
+      return { ok: true };
+    }
+    // Pass discards your current piece — deal a fresh one for next time
+    // and advance the turn (without going through resolveEndOfTurn's head-capture
+    // check, since passing doesn't change the board)
+    g.turn = (g.turn + 1) % 2;
+    dealPiece(g, g.turn);
+    return { ok: true };
+  }
+
+  handleResign(playerIdx) {
+    const g = this.game;
+    if (!g || g.finished) return { error: "game not active" };
+    g.finished = true;
+    g.endReason = "resigned";
+    g.winner = playerIdx === 0 ? 1 : 0;
+    g.lastEvents = { kind: "resign", player: playerIdx };
+    g.moveLog.push({ player: playerIdx, resigned: true });
     return { ok: true };
   }
 
