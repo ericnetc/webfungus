@@ -530,16 +530,14 @@
             </select>
           </div>
         </div>
-        <label class="checkbox-row">
-          <input type="checkbox" id="lookaheadToggle" />
+        <label class="checkbox-row" style="display:none;">
+          <input type="checkbox" id="lookaheadToggle" checked />
           <span>show upcoming pieces</span>
         </label>
         <div class="field" id="lookaheadCountField" style="display:none;">
           <label>how many to show</label>
           <select id="lookaheadCount">
-            <option value="1">1 piece</option>
             <option value="3" selected>3 pieces</option>
-            <option value="5">5 pieces</option>
           </select>
         </div>
         <button class="act" id="createBtn">Create New Colony</button>
@@ -585,6 +583,11 @@
         BITE (3)
       </button>
 
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+        <button class="act" id="passBtn" style="margin-top:0;">PASS</button>
+        <button class="act danger" id="resignBtn" style="margin-top:0;">RESIGN</button>
+      </div>
+
       <div class="upcoming-display hidden" id="upcomingDisplay">
         <div class="label">UPCOMING</div>
         <div class="upcoming-row" id="upcomingRow"></div>
@@ -600,7 +603,19 @@
     <div class="game-over hidden" id="gameOver">
       <h1 id="goTitle">VICTORY</h1>
       <div class="sub" id="goSub">colony dominant</div>
-      <button id="rematchBtn">REMATCH</button>
+      <div style="display:flex; gap:12px;">
+        <button id="rematchBtn">REMATCH</button>
+        <button id="quitBtn">MAIN MENU</button>
+      </div>
+    </div>
+
+    <div class="game-over hidden" id="resignConfirm">
+      <h1 style="color:var(--warn);">RESIGN?</h1>
+      <div class="sub">your opponent will win</div>
+      <div style="display:flex; gap:12px;">
+        <button id="resignYesBtn" style="border-color:var(--warn); color:var(--warn);">YES, RESIGN</button>
+        <button id="resignNoBtn">CANCEL</button>
+      </div>
     </div>
   </main>
 
@@ -643,6 +658,10 @@ let myRoom = null;
 let boardSize = 16;
 let biteMode = false; // toggled by Bite button
 let pulseT = 0; // animation time
+// Animation queue: entries are { cell:[x,y], type, startedAt, duration, color, fromColor }
+// type: 'place' (grow in), 'flip' (color crossfade), 'convert' (slow color crossfade), 'kill' (fade to empty), 'bite' (red flash)
+let anims = [];
+let lastSeenEventId = null; // tracks which lastEvents we've already converted to anims
 let pulseAnim = null;
 
 function makeCode() {
@@ -691,7 +710,15 @@ function connect(room, name, role, extra = {}) {
     }
     if (msg.type === "state") {
       myIndex = msg.yourIndex;
-      const wasNewGame = !lastState || lastState.size !== msg.size;
+      const wasNewGame = !lastState || lastState.size !== msg.size ||
+        (lastState.moveLog && msg.moveLog && msg.moveLog.length < lastState.moveLog.length);
+      if (wasNewGame) {
+        anims = [];
+        lastSeenEventId = null;
+      }
+      // Ingest events from the server into our animation queue,
+      // before swapping in the new state so we can compare if needed.
+      ingestEvents(msg);
       lastState = msg;
       boardSize = msg.size;
       enterGame();
@@ -741,10 +768,8 @@ document.getElementById("createBtn").onclick = () => {
   }
   const size = document.getElementById("sizeSelect").value;
   const offset = document.getElementById("offsetSelect").value;
-  const lookaheadOn = document.getElementById("lookaheadToggle").checked;
-  const lookahead = lookaheadOn ? document.getElementById("lookaheadCount").value : "0";
   const code = makeCode();
-  connect(code, name, "create", { size, offset, lookahead });
+  connect(code, name, "create", { size, offset, lookahead: "3" });
 };
 document.getElementById("joinBtn").onclick = () => {
   const name = document.getElementById("nameInput").value.trim();
@@ -763,6 +788,35 @@ document.getElementById("codeInput").addEventListener("input", (e) => {
   e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
 });
 document.getElementById("rematchBtn").onclick = () => send({ type: "rematch" });
+document.getElementById("quitBtn").onclick = () => {
+  if (ws) ws.close();
+  // Reset UI to lobby
+  lastState = null;
+  myIndex = null;
+  myRoom = null;
+  document.getElementById("gameOver").classList.add("hidden");
+  document.getElementById("gameInfo").classList.add("hidden");
+  document.getElementById("waiting").classList.add("hidden");
+  document.getElementById("lobby").classList.remove("hidden");
+  document.getElementById("roomCodeDisplay").innerHTML = "";
+  document.getElementById("lobbyErr").textContent = "";
+};
+document.getElementById("passBtn").onclick = () => {
+  if (!lastState || lastState.finished) return;
+  if (lastState.turn !== myIndex) return;
+  send({ type: "pass" });
+};
+document.getElementById("resignBtn").onclick = () => {
+  if (!lastState || lastState.finished) return;
+  document.getElementById("resignConfirm").classList.remove("hidden");
+};
+document.getElementById("resignYesBtn").onclick = () => {
+  document.getElementById("resignConfirm").classList.add("hidden");
+  send({ type: "resign" });
+};
+document.getElementById("resignNoBtn").onclick = () => {
+  document.getElementById("resignConfirm").classList.add("hidden");
+};
 
 document.getElementById("biteBtn").onclick = () => {
   if (!lastState || lastState.finished) return;
@@ -774,11 +828,9 @@ document.getElementById("biteBtn").onclick = () => {
 
 function settingsHtml(s) {
   if (!s) return "";
-  const la = s.lookahead > 0 ? `${s.lookahead} piece${s.lookahead > 1 ? "s" : ""}` : "off";
   return (
     `<div class="row"><span>grid</span><strong>${s.size} × ${s.size}</strong></div>` +
     `<div class="row"><span>head spread</span><strong>${s.offset} from center</strong></div>` +
-    `<div class="row"><span>lookahead</span><strong>${la}</strong></div>` +
     `<div class="row"><span>bites each</span><strong>3</strong></div>`
   );
 }
@@ -826,9 +878,189 @@ function glowFor(playerNum) {
   return null;
 }
 
+// === Animation system ===
+// Server sends `lastEvents` describing what just happened. We turn each affected
+// cell into a short-lived animation entry. Render applies overlays based on the
+// animation's progress (0..1).
+//
+// We attach a unique id to each `lastEvents` payload so we don't double-ingest
+// the same event when the state happens to be re-broadcast.
+function ingestEvents(msg) {
+  const e = msg.lastEvents;
+  if (!e) return;
+  // Use a stable identity: turn count + kind. Cheap and good enough since the
+  // server only sets lastEvents when something actually happened.
+  const id = (msg.moveLog ? msg.moveLog.length : 0) + ":" + e.kind;
+  if (lastSeenEventId === id) return;
+  lastSeenEventId = id;
+
+  const now = performance.now();
+  if (e.kind === "place") {
+    // Placed cells grow in
+    for (const [x, y] of e.placed || []) {
+      anims.push({ x, y, type: "place", startedAt: now, duration: 280, owner: e.player + 1 });
+    }
+    // Captured cells flip color (with a tiny stagger for cascade feel)
+    let i = 0;
+    for (const [x, y] of e.flipped || []) {
+      anims.push({ x, y, type: "flip", startedAt: now + 60 + (i * 12), duration: 360, owner: e.player + 1 });
+      i++;
+    }
+    // Converted cells (orphan absorbed) — appear later, slower
+    let j = 0;
+    for (const [x, y] of e.converted || []) {
+      anims.push({ x, y, type: "convert", startedAt: now + 200 + (j * 14), duration: 520, owner: e.player + 1 });
+      j++;
+    }
+  } else if (e.kind === "bite") {
+    if (e.bitten) {
+      const [bx, by] = e.bitten;
+      anims.push({ x: bx, y: by, type: "bite", startedAt: now, duration: 380 });
+    }
+    let k = 0;
+    for (const [x, y] of e.killed || []) {
+      anims.push({ x, y, type: "kill", startedAt: now + 120 + (k * 12), duration: 420 });
+      k++;
+    }
+  }
+}
+
+function activeAnims(now) {
+  // Drop expired ones
+  anims = anims.filter(a => now < a.startedAt + a.duration);
+  return anims;
+}
+
+// Get progress (0..1) of an animation, with optional easing.
+function animProgress(a, now) {
+  if (now < a.startedAt) return 0;
+  const t = Math.min(1, (now - a.startedAt) / a.duration);
+  return t;
+}
+
+// ease-out: starts fast, slows. Good for "settle in" feel.
+function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+function easeInOut(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2; }
+
+// Render a single animation overlay on top of the cell.
+function drawAnim(a, now) {
+  const t = animProgress(a, now);
+  const px = a.x * CELL;
+  const py = a.y * CELL;
+
+  if (a.type === "place") {
+    // Cell grows from center; brief bright glow
+    const e = easeOut(t);
+    const size = (CELL - 4) * e;
+    const offset = (CELL - size) / 2;
+    const color = colorFor(a.owner);
+    const glow = glowFor(a.owner);
+    // Draw the cell at scaled size, brightening then settling
+    ctx.shadowColor = glow;
+    ctx.shadowBlur = CELL * (0.6 - 0.3 * e);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 1;
+    ctx.fillRect(px + offset, py + offset, size, size);
+    ctx.shadowBlur = 0;
+    // Brief flash overlay early in the animation
+    if (t < 0.45) {
+      ctx.fillStyle = glow;
+      ctx.globalAlpha = (1 - t / 0.45) * 0.55;
+      ctx.fillRect(px + offset, py + offset, size, size);
+      ctx.globalAlpha = 1;
+    }
+  } else if (a.type === "flip") {
+    // Color crossfade with a white flash mid-way
+    const e = easeInOut(t);
+    const color = colorFor(a.owner);
+    const glow = glowFor(a.owner);
+    ctx.shadowColor = glow;
+    ctx.shadowBlur = CELL * 0.35 * e;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = e;  // fade in over old color
+    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.shadowBlur = 0;
+    // Flash peak around t=0.5
+    const flash = Math.max(0, 1 - Math.abs(t - 0.5) * 4);
+    if (flash > 0.05) {
+      ctx.fillStyle = "#ffffff";
+      ctx.globalAlpha = flash * 0.45;
+      ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    }
+    ctx.globalAlpha = 1;
+  } else if (a.type === "convert") {
+    // Slower color crossfade with no flash, to convey "absorption"
+    const e = easeInOut(t);
+    const color = colorFor(a.owner);
+    const glow = glowFor(a.owner);
+    ctx.shadowColor = glow;
+    ctx.shadowBlur = CELL * 0.25 * e;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = e;
+    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.shadowBlur = 0;
+    // Outline pulse showing it's being absorbed
+    ctx.strokeStyle = glow;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = (1 - e) * 0.7;
+    ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.globalAlpha = 1;
+  } else if (a.type === "bite") {
+    // Red flash that fades out — cell is becoming empty
+    const fadeIn = Math.min(1, t * 4);  // 0..0.25 ramps in
+    const fadeOut = Math.max(0, 1 - (t - 0.3) / 0.7);  // after 0.3, fade out
+    const intensity = t < 0.3 ? fadeIn : fadeOut;
+    ctx.fillStyle = getCSS("--warn");
+    ctx.globalAlpha = intensity * 0.85;
+    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.shadowColor = getCSS("--warn-glow");
+    ctx.shadowBlur = CELL * 0.5 * intensity;
+    ctx.strokeStyle = getCSS("--warn-glow");
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = intensity;
+    ctx.beginPath();
+    ctx.moveTo(px + 6, py + 6);
+    ctx.lineTo(px + CELL - 6, py + CELL - 6);
+    ctx.moveTo(px + CELL - 6, py + 6);
+    ctx.lineTo(px + 6, py + CELL - 6);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  } else if (a.type === "kill") {
+    // Fade-out: pretend the cell is still there at decreasing alpha,
+    // so the death has a visible decay. We don't know the owner color from
+    // the event (the cell is already gone server-side), but we can darken.
+    const e = easeOut(t);
+    ctx.fillStyle = getCSS("--warn");
+    ctx.globalAlpha = (1 - e) * 0.5;
+    ctx.fillRect(px + 3, py + 3, CELL - 6, CELL - 6);
+    ctx.strokeStyle = getCSS("--warn");
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = (1 - e) * 0.7;
+    ctx.setLineDash([2, 2]);
+    ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// Returns a Set of "x,y" strings of cells currently being animated with type "place"
+// (so the static cell drawing can skip them and let the animation own the cell).
+function suppressedCellsForPlace(now) {
+  const s = new Set();
+  for (const a of anims) {
+    if (a.type === "place" && now < a.startedAt + a.duration) {
+      s.add(`${a.x},${a.y}`);
+    }
+  }
+  return s;
+}
+
 function render() {
   if (!lastState) return;
   const { board, turn, nextPiece, finished, heads, threats } = lastState;
+  const now = performance.now();
+  activeAnims(now);  // clean up expired
 
   ctx.fillStyle = getCSS("--board-bg");
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -840,17 +1072,28 @@ function render() {
     ctx.beginPath(); ctx.moveTo(0, i*CELL); ctx.lineTo(boardSize*CELL, i*CELL); ctx.stroke();
   }
 
+  // Cells with active "place" animations should be drawn by the animation,
+  // not the static path — otherwise we'd see a fully-grown cell underneath
+  // the growing one.
+  const suppressed = suppressedCellsForPlace(now);
+
   // Cells (skipping head positions — heads draw on top)
   for (let y = 0; y < boardSize; y++) {
     for (let x = 0; x < boardSize; x++) {
       const v = board[y][x];
       if (v === 0) continue;
       if (heads && heads.some(h => h.x === x && h.y === y)) continue; // head drawn separately
+      if (suppressed.has(`${x},${y}`)) continue; // grow-in animation owns this cell
       drawCell(x, y, v);
     }
   }
 
-  // Heads
+  // Active animations on top of the static cells
+  for (const a of anims) {
+    drawAnim(a, now);
+  }
+
+  // Heads (draw on top of everything else, including animations)
   if (heads) {
     for (let i = 0; i < heads.length; i++) {
       drawHead(heads[i], threats ? threats[i] : 0);
@@ -861,6 +1104,14 @@ function render() {
   if (!finished && turn === myIndex && hover.x >= 0) {
     if (biteMode) {
       drawBitePreview(hover.x, hover.y);
+      // Preview which cells would be killed by this bite
+      const valid = checkValidBite(hover.x, hover.y, myIndex + 1, board, heads);
+      if (valid) {
+        const preview = previewBite(hover.x, hover.y, myIndex + 1, board, heads);
+        for (const [x, y] of preview.killed) {
+          drawDeathOutline(x, y);
+        }
+      }
     } else if (nextPiece[myIndex]) {
       const shape = rotate(SHAPES[nextPiece[myIndex]], rotation);
       const cells = shape.map(([dx, dy]) => [hover.x + dx, hover.y + dy]);
@@ -869,6 +1120,17 @@ function render() {
         if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) continue;
         const color = valid ? colorFor(myIndex + 1) : getCSS("--warn");
         drawCellGhost(x, y, color);
+      }
+      // Preview captures and conversions
+      if (valid) {
+        const preview = previewPlacement(cells, myIndex + 1, board, heads);
+        const myColor = colorFor(myIndex + 1);
+        for (const [x, y] of preview.flipped) {
+          drawCaptureOutline(x, y, myColor, "flip");
+        }
+        for (const [x, y] of preview.converted) {
+          drawCaptureOutline(x, y, myColor, "convert");
+        }
       }
     }
   }
@@ -1010,6 +1272,40 @@ function drawBitePreview(x, y) {
   }
 }
 
+// Outline a cell that WOULD be captured/converted on this hover.
+// kind = "flip" (direct capture) or "convert" (orphan absorb)
+function drawCaptureOutline(x, y, color, kind) {
+  const px = x * CELL;
+  const py = y * CELL;
+  const pulse = 0.6 + 0.4 * Math.sin(pulseT * 0.008);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = kind === "convert" ? 2 : 3;
+  ctx.globalAlpha = 0.85 + pulse * 0.15;
+  // Solid for direct flips, dashed for orphan conversions (different "feel")
+  if (kind === "convert") ctx.setLineDash([4, 3]);
+  ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
+  ctx.setLineDash([]);
+  // Soft fill so the player can see at a glance what would change
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.18 + pulse * 0.10;
+  ctx.fillRect(px + 3, py + 3, CELL - 6, CELL - 6);
+  ctx.globalAlpha = 1;
+}
+
+// Outline an enemy cell that would die from a bite (orphaned)
+function drawDeathOutline(x, y) {
+  const px = x * CELL;
+  const py = y * CELL;
+  const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.010);
+  ctx.strokeStyle = getCSS("--warn");
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.7 + pulse * 0.2;
+  ctx.setLineDash([3, 3]);
+  ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+}
+
 function checkValidPlacement(cells, playerNum, board, heads) {
   for (const [x, y] of cells) {
     if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return false;
@@ -1042,6 +1338,116 @@ function checkValidBite(x, y, playerNum, board, heads) {
         && board[ny][nx] === playerNum) return true;
   }
   return false;
+}
+
+// Client-side capture/orphan simulation, mirroring the server logic.
+// Used for the "preview what this move would do" feature.
+function simCapture(board, playerNum, heads) {
+  const enemy = playerNum === 1 ? 2 : 1;
+  const isHead = (x, y) => heads.some(h => h.x === x && h.y === y);
+  const headOwner = (x, y) => {
+    const h = heads.find(h => h.x === x && h.y === y);
+    return h ? h.playerNum : null;
+  };
+  const isMine = (x, y) => {
+    if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return false;
+    if (isHead(x, y)) return headOwner(x, y) === playerNum;
+    return board[y][x] === playerNum;
+  };
+  const isFlippableEnemy = (x, y) => {
+    if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return false;
+    if (isHead(x, y)) return false;
+    return board[y][x] === enemy;
+  };
+  const DIRS = [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,1],[1,-1],[-1,1]];
+  const flipped = [];
+  while (true) {
+    const toFlip = new Set();
+    for (let y = 0; y < boardSize; y++) {
+      for (let x = 0; x < boardSize; x++) {
+        if (!isMine(x, y)) continue;
+        for (const [dx, dy] of DIRS) {
+          const ray = [];
+          let nx = x + dx, ny = y + dy;
+          while (isFlippableEnemy(nx, ny)) {
+            ray.push([nx, ny]);
+            nx += dx; ny += dy;
+          }
+          if (ray.length > 0 && isMine(nx, ny)) {
+            for (const [rx, ry] of ray) toFlip.add(`${rx},${ry}`);
+          }
+        }
+      }
+    }
+    if (toFlip.size === 0) break;
+    for (const k of toFlip) {
+      const [x, y] = k.split(",").map(Number);
+      board[y][x] = playerNum;
+      flipped.push([x, y]);
+    }
+  }
+  return flipped;
+}
+
+// Returns orphan cells. fate "convert" turns them into the OTHER player's color.
+// fate "die" makes them empty.
+function simOrphans(board, heads, fate) {
+  const result = [];
+  for (let p = 1; p <= 2; p++) {
+    const head = heads.find(h => h.playerNum === p);
+    if (!head) continue;
+    // BFS from head through cells of own color
+    const reached = new Set([`${head.x},${head.y}`]);
+    const stack = [[head.x, head.y]];
+    while (stack.length) {
+      const [x, y] = stack.pop();
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= boardSize || ny < 0 || ny >= boardSize) continue;
+        const k = `${nx},${ny}`;
+        if (reached.has(k)) continue;
+        if (board[ny][nx] !== p) continue;
+        reached.add(k);
+        stack.push([nx, ny]);
+      }
+    }
+    for (let y = 0; y < boardSize; y++) {
+      for (let x = 0; x < boardSize; x++) {
+        if (board[y][x] !== p) continue;
+        if (heads.some(h => h.x === x && h.y === y)) continue;
+        if (!reached.has(`${x},${y}`)) {
+          result.push({ x, y, owner: p });
+          if (fate === "die") board[y][x] = 0;
+          else if (fate === "convert") board[y][x] = p === 1 ? 2 : 1;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+// Simulate a placement and return what would change.
+function previewPlacement(cells, playerNum, board, heads) {
+  // Clone board
+  const sim = board.map(row => row.slice());
+  for (const [x, y] of cells) sim[y][x] = playerNum;
+  const flipped = simCapture(sim, playerNum, heads);
+  const orphans = simOrphans(sim, heads, "convert");
+  // Orphans here are anything disconnected — for preview, we want only the OPPONENT's
+  // orphans (which become ours)
+  const enemy = playerNum === 1 ? 2 : 1;
+  const converted = orphans.filter(o => o.owner === enemy).map(o => [o.x, o.y]);
+  return { flipped, converted };
+}
+
+// Simulate a bite and return what would change.
+function previewBite(x, y, playerNum, board, heads) {
+  const sim = board.map(row => row.slice());
+  sim[y][x] = 0;
+  const orphans = simOrphans(sim, heads, "die");
+  const enemy = playerNum === 1 ? 2 : 1;
+  const killed = orphans.filter(o => o.owner === enemy).map(o => [o.x, o.y]);
+  return { bitten: [x, y], killed };
 }
 
 function pieceSvg(pieceType, w, h, color, padding = 2) {
@@ -1153,13 +1559,17 @@ function updateSidebar() {
 }
 
 function updateBiteButton() {
-  const btn = document.getElementById("biteBtn");
   if (!lastState) return;
-  const remaining = (lastState.bitesRemaining || [3,3])[myIndex];
-  btn.textContent = `BITE (${remaining})`;
   const myTurn = lastState.turn === myIndex && !lastState.finished;
-  btn.disabled = !myTurn || remaining <= 0;
-  btn.classList.toggle("active", biteMode);
+
+  const biteBtn = document.getElementById("biteBtn");
+  const remaining = (lastState.bitesRemaining || [3,3])[myIndex];
+  biteBtn.textContent = `BITE (${remaining})`;
+  biteBtn.disabled = !myTurn || remaining <= 0;
+  biteBtn.classList.toggle("active", biteMode);
+
+  document.getElementById("passBtn").disabled = !myTurn;
+  document.getElementById("resignBtn").disabled = lastState.finished;
 }
 
 function updateLog() {
@@ -1175,6 +1585,10 @@ function updateLog() {
     const who = `<span class="who">${escapeHtml(playerName)}</span>`;
     if (entry.skipped) {
       div.innerHTML = `${turnTag} · ${who} skipped — no legal action`;
+    } else if (entry.passed) {
+      div.innerHTML = `${turnTag} · ${who} passed`;
+    } else if (entry.resigned) {
+      div.innerHTML = `${turnTag} · ${who} <span style="color:var(--warn);">RESIGNED</span>`;
     } else if (entry.bite) {
       const killText = entry.killed > 0
         ? ` · <span class="flip">${entry.killed} killed</span>` : "";
@@ -1202,18 +1616,28 @@ function updateGameOver() {
   const reason = lastState.endReason;
 
   if (lastState.winner === -1) {
-    title.textContent = "STALEMATE";
+    title.textContent = reason === "mutual_pass" ? "CAT'S GAME" : "STALEMATE";
     title.style.color = "var(--text)";
-    sub.textContent = "the colonies are deadlocked";
+    sub.textContent = reason === "mutual_pass"
+      ? "both players passed — neither colony advances"
+      : "the colonies are deadlocked";
   } else if (lastState.winner === myIndex) {
     if (reason === "head_captured") {
       title.textContent = "HEAD TAKEN";
       title.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
-      sub.textContent = "you flanked the enemy head";
+      sub.textContent = "the enemy head is consumed";
     } else if (reason === "forfeit") {
       title.textContent = "VICTORY";
       title.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
       sub.textContent = "your opponent disconnected";
+    } else if (reason === "resigned") {
+      title.textContent = "VICTORY";
+      title.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
+      sub.textContent = "your opponent resigned";
+    } else if (reason === "mutual_pass") {
+      title.textContent = "VICTORY";
+      title.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
+      sub.textContent = "passed game — your colony was stronger near its head";
     } else {
       title.textContent = "VICTORY";
       title.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
@@ -1223,7 +1647,15 @@ function updateGameOver() {
     if (reason === "head_captured") {
       title.textContent = "HEAD CONSUMED";
       title.style.color = "var(--warn)";
-      sub.textContent = "your head has been flanked";
+      sub.textContent = "your line was flanked";
+    } else if (reason === "resigned") {
+      title.textContent = "RESIGNED";
+      title.style.color = "var(--text-dim)";
+      sub.textContent = "you withdrew from the substrate";
+    } else if (reason === "mutual_pass") {
+      title.textContent = "DEFEAT";
+      title.style.color = "var(--warn)";
+      sub.textContent = "passed game — your colony was weaker near its head";
     } else {
       title.textContent = "CONSUMED";
       title.style.color = "var(--warn)";
@@ -1239,8 +1671,7 @@ function escapeHtml(s) {
 // Continuous render loop for head pulsing/breathing animation
 function tick() {
   pulseT = performance.now();
-  if (lastState && !lastState.finished) {
-    // Re-render only the heads/threats; just call render() since canvas is small
+  if (lastState && (!lastState.finished || anims.length > 0)) {
     render();
   }
   pulseAnim = requestAnimationFrame(tick);
