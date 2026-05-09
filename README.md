@@ -1,4 +1,4 @@
-# NetFungus — Cloudflare Edition
+# WebFungus — Cloudflare Edition
 
 A networked Reversi-meets-Tetris remake. Two players, one petri dish, deployable to
 Cloudflare Workers + Durable Objects with no software installed locally.
@@ -24,7 +24,7 @@ You need:
 
 1. Sign in to github.com
 2. Click **New repository** (top left, green button after login)
-3. Name it `netfungus`, leave it public, **don't** check "initialize with README", click **Create**
+3. Name it `webfungus`, leave it public, **don't** check "initialize with README", click **Create**
 4. On the empty repo page, click the link **uploading an existing file** (in the quick-setup section)
 5. Unzip the project. Drag the **contents** of the unzipped folder into the upload area:
    - `src/` (folder)
@@ -39,16 +39,16 @@ You need:
 1. Sign in to dash.cloudflare.com
 2. In the left sidebar, click **Workers & Pages**
 3. Click **Create application**, then **Get started** under "Import a repository"
-4. The first time, you'll be asked to install Cloudflare's GitHub app. Pick the `netfungus` repo (or grant access to all repos — your call)
-5. Select the `netfungus` repository in the list
+4. The first time, you'll be asked to install Cloudflare's GitHub app. Pick the `webfungus` repo (or grant access to all repos — your call)
+5. Select the `webfungus` repository in the list
 6. Cloudflare reads `wrangler.jsonc` and pre-fills most settings. Verify:
-   - **Project name:** netfungus
+   - **Project name:** webfungus
    - **Build command:** (leave empty — there's nothing to build)
    - **Deploy command:** `npx wrangler deploy` (this is the default and is fine)
 7. Click **Save and Deploy**
 
 The first deploy takes ~1 minute. When it's done you'll see a URL like
-`https://netfungus.<your-subdomain>.workers.dev`.
+`https://webfungus.<your-subdomain>.workers.dev`.
 
 Open it in two browser windows (or share with a friend). One creates a colony, the other
 joins with the 4-letter code.

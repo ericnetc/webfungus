@@ -1,4 +1,4 @@
-// NetFungus on Cloudflare Workers + Durable Objects, v0.4
+// WebFungus on Cloudflare Workers + Durable Objects, v0.4
 //
 // Rule changes from v0.3:
 //   - Captures: an enemy cell flips when 2 OPPOSITE sides (N+S or E+W) are mine.
