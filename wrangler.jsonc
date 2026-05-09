@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
-  "name": "netfungus",
+  "name": "webfungus",
   "main": "src/index.js",
   "compatibility_date": "2025-09-01",
   "assets": {
