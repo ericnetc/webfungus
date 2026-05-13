@@ -326,10 +326,17 @@ function computeStartingBites(size) {
   // 8→3, 10→3, 12→3, 16→3, 20→4, 24→5
 }
 
-// Bite area radius scales with colony size.
-// 0–24 cells = radius 0 (1×1), 25–49 = radius 1 (3×3), 50+ = radius 2 (5×5).
-function computeBiteRadius(cellCount) {
-  return Math.min(2, Math.floor(cellCount / 25));
+// Bite area radius scales as a fraction of the board, so it feels consistent
+// across all board sizes. Thresholds are intentionally high — large bites are a
+// late-game / near-draw option, not a routine mid-game tool.
+//   radius 0 (1×1): below 20% of the board filled
+//   radius 1 (3×3): 20–44% of the board filled
+//   radius 2 (5×5): 45%+ of the board filled (massive, near-draw colonies only)
+function computeBiteRadius(cellCount, boardSize) {
+  const pct = cellCount / (boardSize * boardSize);
+  if (pct >= 0.45) return 2;
+  if (pct >= 0.20) return 1;
+  return 0;
 }
 
 // Award extra bites capped at BITE_MAX.
@@ -535,7 +542,7 @@ function simulateBite(board, heads, size, playerNum, x, y, radius = 0) {
 function pickEasyMove(game, playerIdx) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
-  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size));
+  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size), game.size);
 
   if (game.bitesRemaining[playerIdx] > 0 && Math.random() < 0.30) {
     const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum)];
@@ -570,7 +577,7 @@ function pickEasyMove(game, playerIdx) {
 function pickModerateMove(game, playerIdx) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
-  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size));
+  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size), game.size);
   let best = null;
   const consider = (action, score) => {
     if (best === null || score > best.score) best = { score, action };
@@ -616,7 +623,7 @@ function pickModerateMove(game, playerIdx) {
 function pickHardMove(game, playerIdx) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
-  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size));
+  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size), game.size);
   const TOP_K = 8;
   const TOP_K_OPP = 4;
 
@@ -739,6 +746,7 @@ export class Room extends DurableObject {
         winCondition: DEFAULT_WIN_CONDITION,
         lookahead: DEFAULT_LOOKAHEAD,
       };
+      this.snapshots = (await this.ctx.storage.get("snapshots")) || [];
       this.botTimer = null;
     });
   }
@@ -843,9 +851,10 @@ export class Room extends DurableObject {
       bitesRemaining: this.game.bitesRemaining,
       biteRadius: this.game.heads.map((h, i) =>
         (h && !this.game.eliminated[i])
-          ? computeBiteRadius(countCells(this.game.board, h.playerNum, this.game.size))
+          ? computeBiteRadius(countCells(this.game.board, h.playerNum, this.game.size), this.game.size)
           : 0
       ),
+      snapshotCount: this.snapshots ? this.snapshots.length : 0,
       eliminated: this.game.eliminated,
       upcoming: myUpcoming,
       yourIndex: perspectiveSlotIdx,
@@ -950,15 +959,39 @@ export class Room extends DurableObject {
     if (msg.type === "rematch") {
       this.game = newGame(this.settings, this.slots);
       for (let i = 0; i < this.game.playerCount; i++) dealPiece(this.game, i);
+      this.snapshots = [];
       await this.ctx.storage.put("game", this.game);
+      await this.ctx.storage.put("snapshots", []);
       this.broadcastState();
       this.scheduleBotIfNeeded();
       return;
     }
+    if (msg.type === "get_snapshots") {
+      ws.send(JSON.stringify({
+        type: "snapshots",
+        data: this.snapshots || [],
+        fullLog: this.game ? this.game.moveLog : [],
+      }));
+      return;
+    }
+  }
+
+  pushSnapshot() {
+    if (!this.game) return;
+    const g = this.game;
+    this.snapshots.push({
+      board: cloneBoard(g.board),
+      heads: cloneHeads(g.heads),
+      eliminated: [...g.eliminated],
+      counts: g.heads.map(h => h ? countCells(g.board, h.playerNum, g.size) : 0),
+      lastEvents: g.lastEvents,
+    });
   }
 
   async persistAndBroadcast() {
+    this.pushSnapshot();
     await this.ctx.storage.put("game", this.game);
+    await this.ctx.storage.put("snapshots", this.snapshots);
     this.broadcastState();
     this.scheduleBotIfNeeded();
   }
@@ -1008,8 +1041,10 @@ export class Room extends DurableObject {
     this.started = true;
     this.game = newGame(this.settings, this.slots);
     for (let i = 0; i < this.game.playerCount; i++) dealPiece(this.game, i);
+    this.snapshots = [];
     await this.ctx.storage.put("started", true);
     await this.ctx.storage.put("game", this.game);
+    await this.ctx.storage.put("snapshots", []);
     this.broadcastState();
     this.scheduleBotIfNeeded();
   }
@@ -1240,9 +1275,9 @@ export class Room extends DurableObject {
     const v = validateBite(g.board, msg.x, msg.y, playerNum, g.size, heads);
     if (!v.ok) return { error: v.reason };
 
-    // Bite area scales with colony size.
+    // Bite area scales with colony size as a fraction of the board.
     const cellCount = countCells(g.board, playerNum, g.size);
-    const radius = computeBiteRadius(cellCount);
+    const radius = computeBiteRadius(cellCount, g.size);
     g.bitesRemaining[playerIdx]--;
 
     // Remove all enemy cells in the bite area.
@@ -1266,17 +1301,11 @@ export class Room extends DurableObject {
     }
     const killedAll = [...removedCells, ...cascadeKilled];
 
-    // Proportional bite earning: 1 per 5 cascaded orphan kills.
-    let bitesBonusEarned = Math.floor(cascadeKilled.length / 5);
-    if (bitesBonusEarned > 0) awardBiteBonus(g, playerIdx, bitesBonusEarned);
-    bitesBonusEarned += checkBiteMilestones(g, playerIdx);
-
-    // Award a bonus bite for a large cascade kill.
+    // Bite bonus: 1 per 5 cascaded orphan kills, plus threshold bonus for large cascades.
     let bitesBonusEarned = 0;
-    if (killedAll.length >= BITE_CASCADE_THRESHOLD) {
-      awardBiteBonus(g, playerIdx, 1);
-      bitesBonusEarned++;
-    }
+    const cascadeBonus = Math.floor(cascadeKilled.length / 5);
+    if (cascadeBonus > 0) { awardBiteBonus(g, playerIdx, cascadeBonus); bitesBonusEarned += cascadeBonus; }
+    if (killedAll.length >= BITE_CASCADE_THRESHOLD) { awardBiteBonus(g, playerIdx, 1); bitesBonusEarned++; }
     bitesBonusEarned += checkBiteMilestones(g, playerIdx);
 
     g.consecutivePasses = 0;
