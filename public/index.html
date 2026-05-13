@@ -1052,7 +1052,7 @@ function render() {
     ctx.beginPath(); ctx.moveTo(0, i*CELL); ctx.lineTo(boardSize*CELL, i*CELL); ctx.stroke();
   }
   const suppressed = suppressedCellsForPlace(now);
-  drawMycelium(board, heads);
+  drawThreadVeil(board, heads);
   for (let y = 0; y < boardSize; y++) {
     for (let x = 0; x < boardSize; x++) {
       const v = board[y][x];
@@ -1062,7 +1062,6 @@ function render() {
       drawCell(x, y, v);
     }
   }
-  drawCilia(board, heads);
   for (const a of anims) drawAnim(a, now);
   if (heads) {
     for (let i = 0; i < heads.length; i++) {
@@ -1128,47 +1127,9 @@ function drawCell(x, y, playerNum) {
   ctx.globalAlpha = 1;
 }
 
-function drawMycelium(board, heads) {
+function drawThreadVeil(board, heads) {
   if (!board) return;
-  ctx.lineCap = "round";
-  for (let y = 0; y < boardSize; y++) {
-    for (let x = 0; x < boardSize; x++) {
-      const v = board[y][x];
-      if (v <= 0) continue;
-      if (heads && heads.some(h => h && h.x === x && h.y === y)) continue;
-      const glow = glowFor(v);
-      const cx1 = x * CELL + CELL / 2, cy1 = y * CELL + CELL / 2;
-      ctx.strokeStyle = glow;
-      ctx.lineWidth = CELL * 0.2;
-      ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.06;
-      ctx.globalAlpha = 0.42;
-      // Right neighbor
-      if (x + 1 < boardSize && board[y][x + 1] === v &&
-          !(heads && heads.some(h => h && h.x === x + 1 && h.y === y))) {
-        const cx2 = (x + 1) * CELL + CELL / 2;
-        const bend = cy1 + CELL * 0.16 * Math.sin(pulseT * 0.0028 + x * 1.9 + y * 0.7);
-        ctx.beginPath();
-        ctx.moveTo(cx1, cy1);
-        ctx.quadraticCurveTo((cx1 + cx2) / 2, bend, cx2, cy1);
-        ctx.stroke();
-      }
-      // Down neighbor
-      if (y + 1 < boardSize && board[y + 1][x] === v &&
-          !(heads && heads.some(h => h && h.x === x && h.y === y + 1))) {
-        const cy2 = (y + 1) * CELL + CELL / 2;
-        const bend = cx1 + CELL * 0.16 * Math.sin(pulseT * 0.0028 + x * 0.7 + y * 1.9);
-        ctx.beginPath();
-        ctx.moveTo(cx1, cy1);
-        ctx.quadraticCurveTo(bend, (cy1 + cy2) / 2, cx1, cy2);
-        ctx.stroke();
-      }
-    }
-  }
-  ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.lineCap = "butt";
-}
-
-function drawCilia(board, heads) {
-  if (!board) return;
+  const t = pulseT;
   ctx.lineCap = "round";
   for (let y = 0; y < boardSize; y++) {
     for (let x = 0; x < boardSize; x++) {
@@ -1177,20 +1138,30 @@ function drawCilia(board, heads) {
       if (heads && heads.some(h => h && h.x === x && h.y === y)) continue;
       const glow = glowFor(v);
       const cx = x * CELL + CELL / 2, cy = y * CELL + CELL / 2;
-      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]]) {
         const nx = x + dx, ny = y + dy;
-        const exposed = nx < 0 || nx >= boardSize || ny < 0 || ny >= boardSize
-          || board[ny][nx] !== v;
-        if (!exposed) continue;
-        const perpX = -dy, perpY = dx;
-        for (let s = -1; s <= 1; s += 2) {
-          const ox = cx + CELL * 0.41 * dx + CELL * 0.16 * s * perpX;
-          const oy = cy + CELL * 0.41 * dy + CELL * 0.16 * s * perpY;
-          const len = CELL * (0.12 + 0.07 * Math.sin(pulseT * 0.005 + x * 2.3 + y * 1.7 + s));
-          ctx.strokeStyle = glow; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+        const inBounds = nx >= 0 && nx < boardSize && ny >= 0 && ny < boardSize;
+        const isNeighbor = inBounds && board[ny][nx] === v &&
+          !(heads && heads.some(h => h && h.x === nx && h.y === ny));
+        const isDiag = dx !== 0 && dy !== 0;
+        if (!isNeighbor && !inBounds) continue;
+        const threadCount = isNeighbor ? (isDiag ? 5 : 10) : 3;
+        const maxLen = isNeighbor ? (isDiag ? CELL * 0.65 : CELL * 0.80) : CELL * 0.40;
+        for (let i = 0; i < threadCount; i++) {
+          const spread = (i - threadCount * 0.5) / threadCount;
+          const baseAngle = Math.atan2(dy, dx) + spread * 0.55;
+          const wave = 0.09 * Math.sin(t * 0.003 + x * 2.1 + y * 1.7 + i * 3.3);
+          const angle = baseAngle + wave;
+          const len = maxLen * (0.35 + 0.65 * Math.abs(Math.sin(t * 0.002 + i * 2.7 + x + y)));
+          ctx.strokeStyle = glow;
+          ctx.lineWidth = isNeighbor ? (isDiag ? 0.38 : 0.62) : 0.32;
+          ctx.globalAlpha = isNeighbor ? (isDiag ? 0.32 : 0.44) : 0.16;
+          ctx.shadowColor = glow; ctx.shadowBlur = isNeighbor ? 2.5 : 1;
           ctx.beginPath();
-          ctx.moveTo(ox, oy);
-          ctx.lineTo(ox + len * dx, oy + len * dy);
+          ctx.moveTo(cx + CELL * 0.30 * Math.cos(baseAngle), cy + CELL * 0.30 * Math.sin(baseAngle));
+          const cpx = cx + len * 0.55 * Math.cos(angle + 0.25);
+          const cpy = cy + len * 0.55 * Math.sin(angle + 0.25);
+          ctx.quadraticCurveTo(cpx, cpy, cx + len * Math.cos(angle), cy + len * Math.sin(angle));
           ctx.stroke();
         }
       }
@@ -1203,58 +1174,107 @@ function drawHead(head, threatLevel) {
   const px = head.x * CELL, py = head.y * CELL;
   const cx = px + CELL / 2, cy = py + CELL / 2;
   const color = colorFor(head.playerNum), glow = glowFor(head.playerNum);
-  const breathe = 0.82 + 0.18 * Math.sin(pulseT * 0.004 + head.x * 0.7 + head.y * 1.1);
-  const r = CELL * 0.46 * breathe;
+  const t = pulseT;
+
+  // Threat aura
   if (threatLevel >= 2) {
-    const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
+    const pulse = 0.5 + 0.5 * Math.sin(t * 0.012);
     ctx.shadowColor = getCSS("--warn-glow");
     ctx.shadowBlur = CELL * (0.8 + pulse * 0.9);
     ctx.fillStyle = getCSS("--warn");
     ctx.globalAlpha = 0.18 + pulse * 0.22;
-    ctx.beginPath(); ctx.arc(cx, cy, r * 1.4, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, CELL * 0.65, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
   }
-  // Tentacles radiating outward
+
+  // Ichor drip trails
+  ctx.save();
   ctx.lineCap = "round";
-  const numTentacles = 8;
-  for (let i = 0; i < numTentacles; i++) {
-    const baseAngle = (i / numTentacles) * Math.PI * 2;
-    const wave = 0.12 * Math.sin(pulseT * 0.006 + i * 1.4);
-    const angle = baseAngle + wave;
-    const tLen = r * (0.5 + 0.25 * Math.sin(pulseT * 0.005 + i * 2.1));
-    ctx.strokeStyle = glow; ctx.lineWidth = CELL * 0.07;
-    ctx.globalAlpha = 0.55; ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.15;
+  for (let d = 0; d < 6; d++) {
+    const angle = (d / 6) * Math.PI * 2 + 0.4;
+    const dripLen = CELL * (0.18 + 0.12 * Math.abs(Math.sin(t * 0.0015 + d * 2.7)));
+    const sx = cx + CELL * 0.17 * Math.cos(angle);
+    const sy = cy + CELL * 0.17 * Math.sin(angle);
+    const ex = sx + dripLen * Math.cos(angle + 0.05);
+    const ey = sy + dripLen * Math.sin(angle) + dripLen * 0.5;
+    ctx.strokeStyle = color; ctx.lineWidth = CELL * 0.035;
+    ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.1;
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.fillStyle = color; ctx.globalAlpha = 0.45;
+    ctx.beginPath(); ctx.arc(ex, ey, CELL * 0.03, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+
+  // Peeling lobes — 6 petals
+  ctx.save();
+  const LOBES = 6;
+  for (let lobe = 0; lobe < LOBES; lobe++) {
+    const baseA = (lobe / LOBES) * Math.PI * 2;
+    const peelWave = 0.12 * Math.sin(t * 0.002 + lobe * 1.8);
+    const angle = baseA + peelWave;
+    const lobeLen = CELL * (0.48 + 0.09 * Math.sin(t * 0.0025 + lobe * 2.4));
+    const lobeW  = CELL * (0.17 + 0.04 * Math.sin(t * 0.002  + lobe * 3.1));
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    const curlBack = CELL * 0.07 * Math.sin(t * 0.003 + lobe);
+    const grad = ctx.createLinearGradient(0, 0, lobeLen, 0);
+    grad.addColorStop(0, color);
+    grad.addColorStop(0.55, color + "cc");
+    grad.addColorStop(1, color + "44");
+    ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.18;
+    ctx.globalAlpha = 0.88;
     ctx.beginPath();
-    ctx.moveTo(cx + r * 0.85 * Math.cos(angle), cy + r * 0.85 * Math.sin(angle));
-    ctx.lineTo(cx + (r + tLen) * Math.cos(angle), cy + (r + tLen) * Math.sin(angle));
+    ctx.moveTo(CELL * 0.13, 0);
+    ctx.bezierCurveTo(lobeLen * 0.4, -lobeW, lobeLen * 0.8, -lobeW * 0.8, lobeLen, -curlBack);
+    ctx.bezierCurveTo(lobeLen * 0.8,  lobeW * 0.8, lobeLen * 0.4, lobeW, CELL * 0.13, 0);
+    ctx.fillStyle = grad; ctx.fill();
+    // Lobe vein
+    ctx.strokeStyle = glow; ctx.lineWidth = CELL * 0.02;
+    ctx.globalAlpha = 0.45; ctx.shadowBlur = CELL * 0.08;
+    ctx.beginPath();
+    ctx.moveTo(CELL * 0.14, 0); ctx.lineTo(lobeLen - CELL * 0.06, -curlBack * 0.5);
     ctx.stroke();
+    ctx.restore();
   }
-  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-  // Main body
-  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.65;
-  ctx.fillStyle = color;
-  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
-  ctx.shadowBlur = 0;
-  // Inner eye socket
-  ctx.fillStyle = getCSS("--bg-deep");
-  ctx.beginPath(); ctx.arc(cx, cy, r * 0.52, 0, Math.PI * 2); ctx.fill();
-  // Pupil glow
-  const pupilBreath = 0.82 + 0.18 * Math.sin(pulseT * 0.0055 + 1.2);
-  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.45;
+  ctx.restore();
+
+  // Central exposed core
+  const coreR = CELL * (0.21 + 0.03 * Math.sin(t * 0.006));
+  ctx.save();
+  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.5;
+  const coreGrad = ctx.createRadialGradient(cx - CELL * 0.04, cy - CELL * 0.04, CELL * 0.02, cx, cy, coreR);
+  coreGrad.addColorStop(0, "#ffffff");
+  coreGrad.addColorStop(0.25, glow);
+  coreGrad.addColorStop(0.65, color);
+  coreGrad.addColorStop(1, getCSS("--bg-deep"));
+  ctx.beginPath();
+  for (let s = 0; s < 20; s++) {
+    const a = (s / 20) * Math.PI * 2;
+    const lump = coreR + CELL * 0.03 * Math.sin(t * 0.004 + s * 4.3);
+    const ppx = cx + lump * Math.cos(a), ppy = cy + lump * Math.sin(a);
+    s === 0 ? ctx.moveTo(ppx, ppy) : ctx.lineTo(ppx, ppy);
+  }
+  ctx.closePath();
+  ctx.fillStyle = coreGrad; ctx.fill();
+  // Specular
+  ctx.fillStyle = "rgba(255,255,255,0.28)"; ctx.shadowBlur = 0;
+  ctx.beginPath();
+  ctx.ellipse(cx - CELL * 0.07, cy - CELL * 0.09, CELL * 0.09, CELL * 0.06, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Spore mass center pulse
+  ctx.save();
+  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.22;
   ctx.fillStyle = glow;
-  ctx.beginPath(); ctx.arc(cx, cy, r * 0.24 * pupilBreath, 0, Math.PI * 2); ctx.fill();
-  ctx.shadowBlur = 0;
-  // Slit pupil
-  ctx.fillStyle = getCSS("--bg-deep");
-  ctx.fillRect(cx - r * 0.045, cy - r * 0.22, r * 0.09, r * 0.44);
-  // Corner spore flecks
-  ctx.fillStyle = color; ctx.globalAlpha = 0.65;
-  for (const [dx, dy] of [[-0.62,-0.62],[0.62,-0.62],[-0.62,0.62],[0.62,0.62]]) {
-    ctx.beginPath();
-    ctx.arc(cx + r * dx, cy + r * dy, r * 0.10, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1; ctx.lineCap = "butt";
+  ctx.globalAlpha = 0.55 + 0.3 * Math.sin(t * 0.008);
+  ctx.beginPath();
+  ctx.arc(cx, cy, CELL * 0.06 + CELL * 0.02 * Math.sin(t * 0.01), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  ctx.restore();
 }
 
 function drawCellGhost(x, y, color) {
