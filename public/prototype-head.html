@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>WebFungus — Head Prototype</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #080b06; color: #c8d4a0;
+  font-family: monospace;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; min-height: 100vh; gap: 18px; padding: 24px;
+}
+h1 { color: #7ed957; letter-spacing: 4px; font-size: 16px; }
+p.sub { color: #3a4a2a; font-size: 10px; letter-spacing: 2px; }
+.row { display: flex; gap: 32px; align-items: flex-start; }
+.card { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.card span { font-size: 10px; letter-spacing: 3px; color: #4a6a38; }
+canvas { display: block; background: #080b06; }
+</style>
+</head>
+<body>
+<h1>// HEAD PROTOTYPE — JAW CREATURE</h1>
+<p class="sub">Three size variants · Click to pause</p>
+
+<div class="row">
+  <div class="card">
+    <canvas id="headLG" width="380" height="380"></canvas>
+    <span>LARGE (head cell)</span>
+  </div>
+  <div class="card" style="margin-top:60px;">
+    <canvas id="headMD" width="220" height="220"></canvas>
+    <span>MEDIUM</span>
+  </div>
+  <div class="card" style="margin-top:110px;">
+    <canvas id="headSM" width="130" height="130"></canvas>
+    <span>SMALL (in-game size)</span>
+  </div>
+</div>
+
+<script>
+let T = 0;
+const paused = new Set();
+
+// ─── TOOTH DEFINITIONS ──────────────────────────────────────────────────────
+// Each tooth: { ox (offset from center), w (base half-width), h (height), lean (tilt) }
+const UPPER_TEETH = [
+  { ox: -68, w: 6,  h: 22, lean:  0.08 },
+  { ox: -52, w: 9,  h: 34, lean:  0.05 },
+  { ox: -35, w: 11, h: 42, lean:  0.03 },
+  { ox: -17, w: 12, h: 48, lean:  0.01 },
+  { ox:   0, w: 13, h: 52, lean:  0.00 },
+  { ox:  17, w: 12, h: 48, lean: -0.01 },
+  { ox:  35, w: 11, h: 42, lean: -0.03 },
+  { ox:  52, w: 9,  h: 34, lean: -0.05 },
+  { ox:  68, w: 6,  h: 22, lean: -0.08 },
+];
+const LOWER_TEETH = [
+  { ox: -58, w: 5,  h: 18, lean: -0.06 },
+  { ox: -44, w: 8,  h: 28, lean: -0.04 },
+  { ox: -28, w: 10, h: 38, lean: -0.02 },
+  { ox: -10, w: 11, h: 44, lean:  0.00 },
+  { ox:   8, w: 11, h: 44, lean:  0.00 },
+  { ox:  26, w: 10, h: 38, lean:  0.02 },
+  { ox:  42, w: 8,  h: 28, lean:  0.04 },
+  { ox:  56, w: 5,  h: 18, lean:  0.06 },
+];
+
+function drawJawHead(canvas, t, color, glow) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const S = W / 380; // scale factor
+  const cx = W / 2, cy = H / 2;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // ── Jaw gape ─────────────────────────────────────────────────────────────
+  // Slow rhythmic gnashing + occasional snap
+  const gnash = Math.abs(Math.sin(t * 0.0018));
+  const snap = Math.pow(Math.max(0, Math.sin(t * 0.00055)), 14); // rare sharp snap
+  const gape = (24 + gnash * 28 + snap * 55) * S;
+  const jawMidY = cy + 10 * S;
+
+  // ── Mycelium tendrils behind everything ──────────────────────────────────
+  ctx.save();
+  ctx.lineCap = "round";
+  const TENDRILS = 18;
+  for (let i = 0; i < TENDRILS; i++) {
+    const baseAngle = (i / TENDRILS) * Math.PI * 2;
+    const wave = 0.2 * Math.sin(t * 0.0014 + i * 2.3);
+    const angle = baseAngle + wave;
+    const len = (55 + 30 * Math.abs(Math.sin(t * 0.002 + i * 1.7))) * S;
+    const thick = (0.8 + 0.7 * Math.abs(Math.sin(t * 0.0025 + i))) * S;
+    ctx.strokeStyle = `rgba(80,50,20,0.5)`;
+    ctx.lineWidth = thick;
+    ctx.shadowColor = `rgba(120,60,0,0.4)`; ctx.shadowBlur = 4 * S;
+    ctx.beginPath();
+    ctx.moveTo(cx + 70 * S * Math.cos(angle), cy + 60 * S * Math.sin(angle));
+    const cp1x = cx + (len * 0.5 + 12 * S) * Math.cos(angle + 0.3);
+    const cp1y = cy + (len * 0.5 + 12 * S) * Math.sin(angle + 0.3);
+    ctx.quadraticCurveTo(cp1x, cp1y,
+      cx + (75 * S + len) * Math.cos(angle),
+      cy + (65 * S + len) * Math.sin(angle));
+    ctx.stroke();
+    // Branching sub-tendril
+    if (i % 3 === 0) {
+      ctx.strokeStyle = `rgba(60,35,10,0.35)`;
+      ctx.lineWidth = thick * 0.5;
+      const branchAngle = angle + 0.45;
+      const blen = len * 0.55;
+      ctx.beginPath();
+      ctx.moveTo(cx + (75*S + len*0.5) * Math.cos(angle), cy + (65*S + len*0.5) * Math.sin(angle));
+      ctx.lineTo(cx + (75*S + len*0.5 + blen) * Math.cos(branchAngle),
+                 cy + (65*S + len*0.5 + blen) * Math.sin(branchAngle));
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // ── Outer head mass ───────────────────────────────────────────────────────
+  // The "body" is just the fleshy skull wrapping the mouth — lumpy, organic, dark
+  ctx.save();
+  ctx.shadowColor = `rgba(80,10,10,0.7)`; ctx.shadowBlur = 28 * S;
+  const bodyPts = 40;
+  ctx.beginPath();
+  for (let s = 0; s < bodyPts; s++) {
+    const a = (s / bodyPts) * Math.PI * 2;
+    // Flatten vertically in the jaw zone (opening cuts into body)
+    const isMouthZone = Math.abs(Math.sin(a)) < 0.35 && Math.cos(a) > -0.2;
+    const baseR = isMouthZone ? 72 * S : 82 * S;
+    const lump = baseR
+      + 6 * S * Math.sin(t * 0.0019 + s * 3.7)
+      + 4 * S * Math.sin(t * 0.0013 + s * 6.1)
+      + 3 * S * Math.sin(t * 0.0031 + s * 9.3);
+    s === 0
+      ? ctx.moveTo(cx + lump * Math.cos(a), cy + lump * Math.sin(a))
+      : ctx.lineTo(cx + lump * Math.cos(a), cy + lump * Math.sin(a));
+  }
+  ctx.closePath();
+  // Dark crimson flesh
+  const bodyGrad = ctx.createRadialGradient(cx, cy - 15*S, 10*S, cx, cy, 90*S);
+  bodyGrad.addColorStop(0,   "#5a1520");
+  bodyGrad.addColorStop(0.4, "#3d0d14");
+  bodyGrad.addColorStop(0.75,"#220608");
+  bodyGrad.addColorStop(1,   "#0e0205");
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+  ctx.restore();
+
+  // ── Surface ridges / musculature on upper body ────────────────────────────
+  ctx.save();
+  ctx.strokeStyle = `rgba(100,20,25,0.5)`;
+  ctx.lineWidth = 2 * S;
+  ctx.lineCap = "round";
+  ctx.shadowBlur = 0;
+  // Vertical muscle ridges on upper cap
+  for (let r = -3; r <= 3; r++) {
+    const rx = cx + r * 14 * S;
+    const topY = cy - 72 * S + Math.abs(r) * 5 * S;
+    const botY = cy - 30 * S;
+    ctx.beginPath();
+    ctx.moveTo(rx, topY);
+    ctx.bezierCurveTo(rx + r * 3 * S, (topY + botY)/2, rx, (topY + botY)/2, rx, botY);
+    ctx.globalAlpha = 0.4 - Math.abs(r) * 0.06;
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // ── Throat / interior void ────────────────────────────────────────────────
+  ctx.save();
+  const throatGrad = ctx.createRadialGradient(cx, jawMidY + 18*S, 4*S, cx, jawMidY, 62*S);
+  throatGrad.addColorStop(0,   "rgba(255,50,10,0.9)");
+  throatGrad.addColorStop(0.18,"rgba(180,20,5,0.85)");
+  throatGrad.addColorStop(0.45,"rgba(80,5,5,0.8)");
+  throatGrad.addColorStop(0.8, "rgba(20,0,0,0.7)");
+  throatGrad.addColorStop(1,   "rgba(0,0,0,0)");
+  ctx.shadowColor = "#ff2200"; ctx.shadowBlur = 30 * S;
+  // Throat shape — tall oval aligned with gape
+  ctx.beginPath();
+  ctx.ellipse(cx, jawMidY, 72*S, gape + 32*S, 0, 0, Math.PI*2);
+  ctx.fillStyle = throatGrad;
+  ctx.fill();
+  ctx.restore();
+
+  // ── Upper gum / palate ────────────────────────────────────────────────────
+  ctx.save();
+  ctx.shadowColor = "#1a0005"; ctx.shadowBlur = 12 * S;
+  ctx.beginPath();
+  // Arch from left to right, coming down to tooth line
+  ctx.moveTo(cx - 82*S, jawMidY - gape);
+  ctx.bezierCurveTo(
+    cx - 60*S, jawMidY - gape - 38*S,
+    cx + 60*S, jawMidY - gape - 38*S,
+    cx + 82*S, jawMidY - gape
+  );
+  ctx.bezierCurveTo(cx + 50*S, jawMidY - gape + 22*S, cx - 50*S, jawMidY - gape + 22*S, cx - 82*S, jawMidY - gape);
+  ctx.closePath();
+  const gumGradU = ctx.createLinearGradient(cx, jawMidY - gape - 38*S, cx, jawMidY - gape + 22*S);
+  gumGradU.addColorStop(0, "#7a1a28");
+  gumGradU.addColorStop(0.5,"#5c1018");
+  gumGradU.addColorStop(1, "#3d0810");
+  ctx.fillStyle = gumGradU; ctx.fill();
+  ctx.restore();
+
+  // ── Upper teeth ───────────────────────────────────────────────────────────
+  ctx.save();
+  for (const tooth of UPPER_TEETH) {
+    const tx = cx + tooth.ox * S;
+    const ty = jawMidY - gape + 8 * S; // tooth root at gum line
+    const tw = tooth.w * S;
+    const th = tooth.h * S;
+    const lean = tooth.lean;
+    // Subtle per-tooth wobble as jaw moves
+    const wobble = 0.5 * S * Math.sin(t * 0.006 + tooth.ox * 0.05);
+
+    ctx.shadowColor = "rgba(255,255,220,0.3)"; ctx.shadowBlur = 4 * S;
+    // Ivory gradient — slightly yellowed at root, white at tip
+    const tGrad = ctx.createLinearGradient(tx, ty, tx + lean * th, ty + th);
+    tGrad.addColorStop(0,   "#c8b878");
+    tGrad.addColorStop(0.3, "#ddd0a0");
+    tGrad.addColorStop(0.7, "#eeead0");
+    tGrad.addColorStop(1,   "#f5f2e0");
+    ctx.fillStyle = tGrad;
+    ctx.beginPath();
+    ctx.moveTo(tx - tw,         ty + wobble);
+    ctx.lineTo(tx + tw,         ty + wobble);
+    ctx.lineTo(tx + tw * 0.35 + lean * th,  ty + th + wobble);
+    ctx.lineTo(tx - tw * 0.35 + lean * th,  ty + th + wobble);
+    ctx.closePath(); ctx.fill();
+    // Dark crack / groove
+    ctx.strokeStyle = "rgba(80,50,20,0.35)"; ctx.lineWidth = 0.8 * S;
+    ctx.beginPath();
+    ctx.moveTo(tx + lean * th * 0.3, ty + th * 0.25 + wobble);
+    ctx.lineTo(tx + lean * th * 0.7, ty + th * 0.85 + wobble);
+    ctx.stroke();
+    // Specular
+    ctx.fillStyle = "rgba(255,255,255,0.18)";
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.ellipse(tx - tw * 0.3 + lean * th * 0.2, ty + th * 0.25 + wobble, tw * 0.25, th * 0.12, lean - 0.1, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // ── Lower gum ─────────────────────────────────────────────────────────────
+  ctx.save();
+  ctx.shadowColor = "#1a0005"; ctx.shadowBlur = 12 * S;
+  ctx.beginPath();
+  ctx.moveTo(cx - 78*S, jawMidY + gape);
+  ctx.bezierCurveTo(
+    cx - 55*S, jawMidY + gape + 32*S,
+    cx + 55*S, jawMidY + gape + 32*S,
+    cx + 78*S, jawMidY + gape
+  );
+  ctx.bezierCurveTo(cx + 48*S, jawMidY + gape - 18*S, cx - 48*S, jawMidY + gape - 18*S, cx - 78*S, jawMidY + gape);
+  ctx.closePath();
+  const gumGradL = ctx.createLinearGradient(cx, jawMidY + gape - 18*S, cx, jawMidY + gape + 32*S);
+  gumGradL.addColorStop(0, "#5c0d14");
+  gumGradL.addColorStop(1, "#7a1828");
+  ctx.fillStyle = gumGradL; ctx.fill();
+  ctx.restore();
+
+  // ── Lower teeth ───────────────────────────────────────────────────────────
+  ctx.save();
+  for (const tooth of LOWER_TEETH) {
+    const tx = cx + tooth.ox * S;
+    const ty = jawMidY + gape - 8 * S; // root at lower gum
+    const tw = tooth.w * S;
+    const th = tooth.h * S;
+    const lean = tooth.lean;
+    const wobble = 0.5 * S * Math.sin(t * 0.006 + tooth.ox * 0.05 + 1.2);
+
+    ctx.shadowColor = "rgba(255,255,220,0.3)"; ctx.shadowBlur = 4 * S;
+    const tGrad = ctx.createLinearGradient(tx, ty, tx + lean * th, ty - th);
+    tGrad.addColorStop(0,   "#bfaa60");
+    tGrad.addColorStop(0.35,"#d8cc90");
+    tGrad.addColorStop(0.75,"#eceacc");
+    tGrad.addColorStop(1,   "#f4f2e0");
+    ctx.fillStyle = tGrad;
+    ctx.beginPath();
+    ctx.moveTo(tx - tw,                    ty + wobble);
+    ctx.lineTo(tx + tw,                    ty + wobble);
+    ctx.lineTo(tx + tw * 0.3 + lean * th,  ty - th + wobble);
+    ctx.lineTo(tx - tw * 0.3 + lean * th,  ty - th + wobble);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "rgba(80,50,20,0.3)"; ctx.lineWidth = 0.8 * S;
+    ctx.beginPath();
+    ctx.moveTo(tx + lean * th * 0.3, ty - th * 0.2 + wobble);
+    ctx.lineTo(tx + lean * th * 0.7, ty - th * 0.75 + wobble);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.15)";
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.ellipse(tx - tw*0.3 + lean*th*0.2, ty - th*0.22 + wobble, tw*0.22, th*0.1, lean - 0.1, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // ── Saliva strings (only when gaping wide) ────────────────────────────────
+  if (gape > 30 * S) {
+    ctx.save();
+    ctx.lineCap = "round";
+    const strands = 4;
+    for (let s = 0; s < strands; s++) {
+      const sx = cx + (-35 + s * 24) * S;
+      const alpha = Math.min(1, (gape / S - 30) / 30) * (0.4 + 0.2 * Math.sin(t * 0.007 + s));
+      ctx.strokeStyle = `rgba(200,130,100,${alpha})`;
+      ctx.lineWidth = (1.2 + 0.6 * Math.sin(t * 0.004 + s * 2.1)) * S;
+      ctx.shadowColor = "rgba(220,100,80,0.4)"; ctx.shadowBlur = 3 * S;
+      ctx.beginPath();
+      ctx.moveTo(sx, jawMidY - gape + 18 * S);
+      ctx.bezierCurveTo(
+        sx + 5 * S * Math.sin(t * 0.006 + s), jawMidY - 8 * S,
+        sx - 4 * S * Math.sin(t * 0.006 + s + 1), jawMidY + 8 * S,
+        sx + 2 * S, jawMidY + gape - 16 * S
+      );
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ── Outer glow (player color) ─────────────────────────────────────────────
+  ctx.save();
+  ctx.shadowColor = glow; ctx.shadowBlur = 22 * S;
+  ctx.strokeStyle = `rgba(${hexToRgb(glow)},0.25)`;
+  ctx.lineWidth = 3 * S;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 80 * S, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  // ── Fine mycelium threads from body surface ───────────────────────────────
+  ctx.save();
+  ctx.lineCap = "round";
+  for (let i = 0; i < 28; i++) {
+    const a = (i / 28) * Math.PI * 2;
+    // Skip the mouth zone
+    if (Math.abs(Math.sin(a)) < 0.28 && Math.cos(a) > 0) continue;
+    const baseR = 80 * S;
+    const len2 = (14 + 10 * Math.abs(Math.sin(t * 0.003 + i * 2.1))) * S;
+    const wave2 = 0.15 * Math.sin(t * 0.0025 + i * 3.1);
+    const angle2 = a + wave2;
+    ctx.strokeStyle = `rgba(${hexToRgb(color)},0.3)`;
+    ctx.lineWidth = 0.7 * S;
+    ctx.shadowColor = glow; ctx.shadowBlur = 3 * S;
+    ctx.beginPath();
+    ctx.moveTo(cx + baseR * Math.cos(a), cy + baseR * Math.sin(a));
+    ctx.lineTo(cx + (baseR + len2) * Math.cos(angle2), cy + (baseR + len2) * Math.sin(angle2));
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return `${r},${g},${b}`;
+}
+
+// ── Player color variants ────────────────────────────────────────────────────
+// P1 = gold, P2 = green — render large canvas in gold, add color swatches below
+
+function drawAll(t) {
+  drawJawHead(document.getElementById("headLG"), t, "#f4c430", "#ffe066");
+  drawJawHead(document.getElementById("headMD"), t, "#7ed957", "#b5ff8f");
+  drawJawHead(document.getElementById("headSM"), t, "#f4c430", "#ffe066");
+}
+
+// ── Loop ─────────────────────────────────────────────────────────────────────
+["headLG","headMD","headSM"].forEach(id => {
+  document.getElementById(id).addEventListener("click", () => {
+    if (paused.has(id)) paused.delete(id); else paused.add(id);
+  });
+});
+
+function loop() {
+  T = performance.now();
+  if (!paused.has("headLG") || !paused.has("headMD") || !paused.has("headSM")) drawAll(T);
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
