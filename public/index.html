@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>WEBFUNGUS // colony 0.3</title>
+<title>WEBFUNGUS // colony</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=VT323&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -14,10 +14,11 @@
     --board-bg: #2a3122;
     --grid: #4a5439;
     --grid-strong: #6b7853;
-    --p1: #f4c430;
-    --p1-glow: #ffe066;
-    --p2: #7ed957;
-    --p2-glow: #b5ff8f;
+    --p1: #f4c430;        --p1-glow: #ffe066;
+    --p2: #7ed957;        --p2-glow: #b5ff8f;
+    --p3: #b388eb;        --p3-glow: #d8b8ff;
+    --p4: #5cd7d6;        --p4-glow: #9af5f4;
+    --neutral: #6f6f5e;   --neutral-glow: #aaa897;
     --text: #e8dba8;
     --text-dim: #8a8060;
     --warn: #e85a3a;
@@ -27,202 +28,103 @@
 
   * { box-sizing: border-box; }
   html, body {
-    margin: 0;
-    padding: 0;
-    background: var(--bg-deep);
-    color: var(--text);
+    margin: 0; padding: 0;
+    background: var(--bg-deep); color: var(--text);
     font-family: "JetBrains Mono", ui-monospace, monospace;
-    height: 100%;
-    overflow: hidden;
+    height: 100%; overflow: hidden;
   }
-
   body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background: repeating-linear-gradient(
-      0deg, transparent 0, transparent 2px,
-      var(--crt-line) 3px, transparent 4px);
-    z-index: 9999;
-    mix-blend-mode: screen;
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(0deg, transparent 0, transparent 2px, var(--crt-line) 3px, transparent 4px);
+    z-index: 9999; mix-blend-mode: screen;
   }
   body::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
+    content: ""; position: fixed; inset: 0; pointer-events: none;
     background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.4) 100%);
     z-index: 9998;
   }
 
   .app {
     display: grid;
-    grid-template-columns: 340px 1fr 280px;
+    grid-template-columns: 360px 1fr 280px;
     grid-template-rows: 48px 1fr 36px;
-    grid-template-areas:
-      "header header header"
-      "sidebar board log"
-      "footer footer footer";
-    height: 100vh;
-    gap: 1px;
-    background: var(--grid);
-    padding: 1px;
+    grid-template-areas: "header header header" "sidebar board log" "footer footer footer";
+    height: 100vh; gap: 1px; background: var(--grid); padding: 1px;
   }
-
   header.bar {
-    grid-area: header;
-    background: var(--bg);
-    display: flex;
-    align-items: center;
-    padding: 0 18px;
-    font-family: "VT323", monospace;
-    font-size: 24px;
-    letter-spacing: 2px;
-    color: var(--p1);
-    text-shadow: 0 0 8px var(--p1-glow);
+    grid-area: header; background: var(--bg);
+    display: flex; align-items: center; padding: 0 18px;
+    font-family: "VT323", monospace; font-size: 24px; letter-spacing: 2px;
+    color: var(--p2); text-shadow: 0 0 8px var(--p2-glow);
     justify-content: space-between;
   }
-  header.bar .title::before { content: "▓ "; color: var(--p2); }
+  header.bar .title::before { content: "▓ "; color: var(--p1); }
   header.bar .room-code { color: var(--text); font-size: 18px; letter-spacing: 4px; }
   header.bar .room-code span { color: var(--p1); }
 
   aside.sidebar {
-    grid-area: sidebar;
-    background: var(--bg);
-    padding: 18px;
-    overflow-y: auto;
+    grid-area: sidebar; background: var(--bg);
+    padding: 18px; overflow-y: auto;
     border-right: 1px solid var(--grid);
   }
-
   main.board-wrap {
-    grid-area: board;
-    background: var(--bg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    overflow: hidden;
+    grid-area: board; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden;
   }
-
   aside.log {
-    grid-area: log;
-    background: var(--bg);
-    padding: 18px 14px;
-    overflow-y: auto;
-    border-left: 1px solid var(--grid);
-    font-size: 12px;
+    grid-area: log; background: var(--bg);
+    padding: 18px 14px; overflow-y: auto;
+    border-left: 1px solid var(--grid); font-size: 12px;
   }
-
   footer.bar {
-    grid-area: footer;
-    background: var(--bg);
-    display: flex;
-    align-items: center;
-    padding: 0 18px;
-    font-size: 11px;
-    color: var(--text-dim);
-    letter-spacing: 1px;
+    grid-area: footer; background: var(--bg);
+    display: flex; align-items: center; padding: 0 18px;
+    font-size: 11px; color: var(--text-dim); letter-spacing: 1px;
     justify-content: space-between;
   }
 
   .panel-title {
-    font-family: "VT323", monospace;
-    font-size: 22px;
-    color: var(--p1);
-    text-shadow: 0 0 6px var(--p1-glow);
-    letter-spacing: 3px;
-    margin: 0 0 14px;
-    border-bottom: 1px dashed var(--grid-strong);
-    padding-bottom: 10px;
+    font-family: "VT323", monospace; font-size: 22px;
+    color: var(--p1); text-shadow: 0 0 6px var(--p1-glow);
+    letter-spacing: 3px; margin: 0 0 14px;
+    border-bottom: 1px dashed var(--grid-strong); padding-bottom: 10px;
   }
   .panel-section {
-    margin-top: 18px;
-    padding-top: 14px;
+    margin-top: 18px; padding-top: 14px;
     border-top: 1px dashed var(--grid-strong);
   }
   .panel-section-title {
-    font-family: "VT323", monospace;
-    font-size: 16px;
-    color: var(--text-dim);
-    letter-spacing: 3px;
-    margin: 0 0 10px;
+    font-family: "VT323", monospace; font-size: 16px;
+    color: var(--text-dim); letter-spacing: 3px; margin: 0 0 10px;
   }
-
   .field { margin-bottom: 12px; }
   .field label {
-    display: block;
-    font-size: 11px;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    margin-bottom: 4px;
+    display: block; font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 4px;
   }
   .field input[type=text], .field input:not([type]), .field select {
-    width: 100%;
-    background: var(--bg-deep);
-    border: 1px solid var(--grid-strong);
-    color: var(--text);
-    font-family: inherit;
-    padding: 8px 10px;
-    font-size: 14px;
-    outline: none;
-    letter-spacing: 1px;
+    width: 100%; background: var(--bg-deep);
+    border: 1px solid var(--grid-strong); color: var(--text);
+    font-family: inherit; padding: 8px 10px; font-size: 14px;
+    outline: none; letter-spacing: 1px;
   }
   .field input:focus, .field select:focus {
-    border-color: var(--p1);
-    box-shadow: 0 0 0 1px var(--p1) inset;
+    border-color: var(--p1); box-shadow: 0 0 0 1px var(--p1) inset;
   }
   .field input.code-input {
-    text-transform: uppercase;
-    letter-spacing: 6px;
-    font-size: 18px;
-    text-align: center;
+    text-transform: uppercase; letter-spacing: 6px;
+    font-size: 18px; text-align: center;
   }
   .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .field-row .field { margin-bottom: 0; }
 
-  .checkbox-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
-    font-size: 12px;
-    cursor: pointer;
-    user-select: none;
-  }
-  .checkbox-row input[type=checkbox] {
-    appearance: none;
-    width: 16px; height: 16px;
-    border: 1px solid var(--grid-strong);
-    background: var(--bg-deep);
-    cursor: pointer;
-    position: relative;
-    flex-shrink: 0;
-  }
-  .checkbox-row input[type=checkbox]:checked { border-color: var(--p1); }
-  .checkbox-row input[type=checkbox]:checked::after {
-    content: "▓";
-    position: absolute;
-    top: -3px; left: 1px;
-    color: var(--p1);
-    font-size: 14px;
-    line-height: 1;
-  }
-
   button.act {
-    display: block; width: 100%;
-    background: transparent;
-    border: 1px solid var(--p1);
-    color: var(--p1);
-    padding: 10px;
-    font-family: inherit;
-    font-size: 13px;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    cursor: pointer;
-    margin-top: 6px;
-    transition: all 0.15s;
+    display: block; width: 100%; background: transparent;
+    border: 1px solid var(--p1); color: var(--p1);
+    padding: 10px; font-family: inherit; font-size: 13px;
+    letter-spacing: 3px; text-transform: uppercase; cursor: pointer;
+    margin-top: 6px; transition: all 0.15s;
   }
   button.act:hover { background: var(--p1); color: var(--bg-deep); }
   button.act.secondary { border-color: var(--p2); color: var(--p2); }
@@ -231,48 +133,60 @@
   button.act.danger:hover { background: var(--warn); color: var(--bg-deep); }
   button.act.active { background: var(--p1); color: var(--bg-deep); }
   button.act:disabled {
-    border-color: var(--text-dim);
-    color: var(--text-dim);
-    cursor: not-allowed;
-    background: transparent;
+    border-color: var(--text-dim); color: var(--text-dim);
+    cursor: not-allowed; background: transparent;
   }
 
   .or-divider {
-    text-align: center;
-    color: var(--text-dim);
-    margin: 18px 0;
-    font-size: 11px;
-    letter-spacing: 4px;
+    text-align: center; color: var(--text-dim);
+    margin: 18px 0; font-size: 11px; letter-spacing: 4px;
   }
   .or-divider::before, .or-divider::after {
-    content: "─────";
-    margin: 0 8px;
-    opacity: 0.5;
+    content: "─────"; margin: 0 8px; opacity: 0.5;
   }
 
+  /* --- Slot config UI --- */
+  .slot-row {
+    display: grid; grid-template-columns: 24px 1fr;
+    gap: 8px; align-items: center;
+    padding: 6px 8px; margin-bottom: 4px;
+    background: var(--bg-deep); border: 1px solid var(--grid);
+  }
+  .slot-row.p1 { border-left: 3px solid var(--p1); }
+  .slot-row.p2 { border-left: 3px solid var(--p2); }
+  .slot-row.p3 { border-left: 3px solid var(--p3); }
+  .slot-row.p4 { border-left: 3px solid var(--p4); }
+  .slot-row .num { font-size: 11px; color: var(--text-dim); text-align: center; }
+  .slot-row select { padding: 4px 6px; font-size: 12px; }
+  .slot-row .name { font-size: 11px; color: var(--text-dim); padding: 0 6px; letter-spacing: 1px; }
+  .slot-row .name strong { color: var(--text); }
+
+  /* --- Player cards (in-game) --- */
   .player-card {
-    border: 1px solid var(--grid-strong);
-    padding: 10px 12px;
-    margin-bottom: 10px;
-    position: relative;
-    background: var(--bg-deep);
+    border: 1px solid var(--grid-strong); padding: 10px 12px;
+    margin-bottom: 10px; position: relative; background: var(--bg-deep);
   }
   .player-card.p1 { border-left: 3px solid var(--p1); }
   .player-card.p2 { border-left: 3px solid var(--p2); }
+  .player-card.p3 { border-left: 3px solid var(--p3); }
+  .player-card.p4 { border-left: 3px solid var(--p4); }
   .player-card.active::after {
-    content: "◀ TURN";
-    position: absolute;
-    right: 10px; top: 10px;
-    font-size: 10px;
-    letter-spacing: 2px;
-    color: var(--p1-glow);
-    text-shadow: 0 0 4px currentColor;
-    animation: pulse 1.5s infinite;
+    content: "◀ TURN"; position: absolute; right: 10px; top: 10px;
+    font-size: 10px; letter-spacing: 2px;
+    text-shadow: 0 0 4px currentColor; animation: pulse 1.5s infinite;
   }
+  .player-card.p1.active::after { color: var(--p1-glow); }
   .player-card.p2.active::after { color: var(--p2-glow); }
+  .player-card.p3.active::after { color: var(--p3-glow); }
+  .player-card.p4.active::after { color: var(--p4-glow); }
   .player-card.threatened {
     box-shadow: 0 0 12px var(--warn-glow);
     animation: dangerPulse 0.9s infinite;
+  }
+  .player-card.eliminated { opacity: 0.4; }
+  .player-card.eliminated::after {
+    content: "ELIMINATED"; position: absolute; right: 10px; top: 10px;
+    font-size: 10px; color: var(--warn); letter-spacing: 2px;
   }
   @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
   @keyframes dangerPulse {
@@ -280,201 +194,121 @@
     50%     { box-shadow: 0 0 16px var(--warn); }
   }
   .player-card .name {
-    font-size: 14px;
-    color: var(--text);
-    margin-bottom: 4px;
-    letter-spacing: 1px;
-    word-wrap: break-word;
+    font-size: 13px; color: var(--text); margin-bottom: 4px;
+    letter-spacing: 1px; word-wrap: break-word;
   }
   .player-card.p1 .name { color: var(--p1); }
   .player-card.p2 .name { color: var(--p2); }
+  .player-card.p3 .name { color: var(--p3); }
+  .player-card.p4 .name { color: var(--p4); }
+  .player-card .name .badge {
+    font-size: 9px; color: var(--text-dim); margin-left: 4px;
+    padding: 1px 4px; border: 1px solid var(--grid-strong);
+    letter-spacing: 1px; vertical-align: 1px;
+  }
   .player-card .stat {
-    font-size: 11px;
-    color: var(--text-dim);
-    letter-spacing: 1px;
+    font-size: 11px; color: var(--text-dim); letter-spacing: 1px;
   }
   .player-card .stat strong { color: var(--text); font-size: 13px; }
   .player-card .threat-tag {
-    display: inline-block;
-    margin-left: 6px;
-    color: var(--warn);
-    font-size: 10px;
-    letter-spacing: 2px;
-    animation: pulse 0.9s infinite;
+    display: inline-block; margin-left: 6px; color: var(--warn);
+    font-size: 10px; letter-spacing: 2px; animation: pulse 0.9s infinite;
   }
   .player-card .bites-row {
-    display: flex;
-    gap: 4px;
-    margin-top: 6px;
-    align-items: center;
+    display: flex; gap: 4px; margin-top: 6px; align-items: center;
   }
   .player-card .bites-row .label {
-    font-size: 10px;
-    color: var(--text-dim);
-    letter-spacing: 2px;
-    margin-right: 4px;
+    font-size: 10px; color: var(--text-dim); letter-spacing: 2px; margin-right: 4px;
   }
   .bite-pip {
-    display: inline-block;
-    width: 10px; height: 10px;
-    border: 1px solid currentColor;
-    transform: rotate(45deg);
+    display: inline-block; width: 10px; height: 10px;
+    border: 1px solid currentColor; transform: rotate(45deg);
   }
   .player-card.p1 .bite-pip { color: var(--p1); }
   .player-card.p2 .bite-pip { color: var(--p2); }
+  .player-card.p3 .bite-pip { color: var(--p3); }
+  .player-card.p4 .bite-pip { color: var(--p4); }
   .bite-pip.spent { opacity: 0.25; background: transparent; }
   .bite-pip:not(.spent) { background: currentColor; }
 
   .piece-display {
-    margin-top: 18px;
-    padding: 14px;
-    border: 1px dashed var(--grid-strong);
-    text-align: center;
+    margin-top: 18px; padding: 14px;
+    border: 1px dashed var(--grid-strong); text-align: center;
   }
   .piece-display .label {
-    font-size: 11px;
-    letter-spacing: 3px;
-    color: var(--text-dim);
-    margin-bottom: 8px;
+    font-size: 11px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px;
   }
-  .piece-display .piece-svg {
-    width: 100%;
-    max-width: 140px;
-    height: 80px;
-    margin: 0 auto;
-  }
+  .piece-display .piece-svg { width: 100%; max-width: 140px; height: 80px; margin: 0 auto; }
   .piece-display .hint {
-    font-size: 10px;
-    color: var(--text-dim);
-    margin-top: 8px;
-    line-height: 1.4;
+    font-size: 10px; color: var(--text-dim); margin-top: 8px; line-height: 1.4;
   }
   .piece-display .hint kbd {
-    background: var(--bg-deep);
-    border: 1px solid var(--grid-strong);
-    padding: 1px 5px;
-    color: var(--text);
-    font-family: inherit;
-    font-size: 10px;
+    background: var(--bg-deep); border: 1px solid var(--grid-strong);
+    padding: 1px 5px; color: var(--text); font-family: inherit; font-size: 10px;
   }
 
-  .upcoming-display {
-    margin-top: 14px;
-    padding: 10px;
-    border: 1px dashed var(--grid-strong);
-  }
-  .upcoming-display .label {
-    font-size: 10px;
-    letter-spacing: 3px;
-    color: var(--text-dim);
-    margin-bottom: 8px;
-    text-align: center;
-  }
-  .upcoming-row {
-    display: flex; gap: 6px; justify-content: center; align-items: center; flex-wrap: wrap;
-  }
-  .upcoming-row svg {
-    width: 44px; height: 28px;
-    background: var(--bg-deep);
-    border: 1px solid var(--grid);
-    padding: 2px;
-  }
+  .upcoming-display { margin-top: 14px; padding: 10px; border: 1px dashed var(--grid-strong); }
+  .upcoming-display .label { font-size: 10px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; text-align: center; }
+  .upcoming-row { display: flex; gap: 6px; justify-content: center; align-items: center; flex-wrap: wrap; }
+  .upcoming-row svg { width: 44px; height: 28px; background: var(--bg-deep); border: 1px solid var(--grid); padding: 2px; }
   .upcoming-row .arrow { color: var(--text-dim); font-size: 10px; margin: 0 2px; }
 
   .room-info {
-    margin-top: 14px;
-    padding: 8px 10px;
-    background: var(--bg-deep);
-    border: 1px solid var(--grid-strong);
-    font-size: 10px;
-    color: var(--text-dim);
-    letter-spacing: 1.5px;
-    line-height: 1.6;
+    margin-top: 14px; padding: 8px 10px;
+    background: var(--bg-deep); border: 1px solid var(--grid-strong);
+    font-size: 10px; color: var(--text-dim); letter-spacing: 1.5px; line-height: 1.6;
   }
   .room-info .row { display: flex; justify-content: space-between; }
   .room-info strong { color: var(--text); font-weight: normal; }
 
   #board {
-    display: block;
-    image-rendering: pixelated;
-    background: var(--board-bg);
-    border: 1px solid var(--grid-strong);
+    display: block; image-rendering: pixelated;
+    background: var(--board-bg); border: 1px solid var(--grid-strong);
     cursor: crosshair;
   }
   #board.bite-mode { cursor: cell; }
 
   .board-status {
-    position: absolute;
-    top: 16px; left: 50%;
-    transform: translateX(-50%);
-    font-family: "VT323", monospace;
-    font-size: 18px;
-    letter-spacing: 3px;
-    color: var(--text-dim);
-    pointer-events: none;
+    position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+    font-family: "VT323", monospace; font-size: 18px; letter-spacing: 3px;
+    color: var(--text-dim); pointer-events: none;
   }
-  .board-status.bite-mode {
-    color: var(--warn);
-    text-shadow: 0 0 8px var(--warn-glow);
-  }
+  .board-status.bite-mode { color: var(--warn); text-shadow: 0 0 8px var(--warn-glow); }
 
   .game-over {
-    position: absolute;
-    inset: 0;
+    position: absolute; inset: 0;
     background: rgba(22,26,18,0.88);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    z-index: 10;
-    backdrop-filter: blur(2px);
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; z-index: 10; backdrop-filter: blur(2px);
   }
   .game-over h1 {
-    font-family: "VT323", monospace;
-    font-size: 64px;
-    margin: 0;
-    letter-spacing: 6px;
-    text-shadow: 0 0 20px currentColor;
+    font-family: "VT323", monospace; font-size: 64px; margin: 0;
+    letter-spacing: 6px; text-shadow: 0 0 20px currentColor;
   }
   .game-over .sub {
-    margin: 12px 0 24px;
-    font-size: 13px;
-    letter-spacing: 4px;
-    color: var(--text-dim);
+    margin: 12px 0 24px; font-size: 13px; letter-spacing: 4px; color: var(--text-dim);
   }
   .game-over button {
-    background: transparent;
-    border: 1px solid var(--text);
-    color: var(--text);
-    padding: 12px 28px;
-    font-family: inherit;
-    letter-spacing: 4px;
-    cursor: pointer;
-    text-transform: uppercase;
-    font-size: 13px;
+    background: transparent; border: 1px solid var(--text); color: var(--text);
+    padding: 12px 28px; font-family: inherit; letter-spacing: 4px;
+    cursor: pointer; text-transform: uppercase; font-size: 13px;
   }
   .game-over button:hover { background: var(--text); color: var(--bg-deep); }
 
   .log-entry {
-    padding: 4px 0;
-    border-bottom: 1px dotted var(--grid);
-    font-size: 11px;
-    letter-spacing: 0.5px;
-    color: var(--text-dim);
+    padding: 4px 0; border-bottom: 1px dotted var(--grid);
+    font-size: 11px; letter-spacing: 0.5px; color: var(--text-dim);
   }
   .log-entry .turn-num { color: var(--text); }
   .log-entry.p1 .who { color: var(--p1); }
   .log-entry.p2 .who { color: var(--p2); }
+  .log-entry.p3 .who { color: var(--p3); }
+  .log-entry.p4 .who { color: var(--p4); }
   .log-entry .flip { color: var(--p1-glow); }
   .log-entry .bite-tag { color: var(--warn); letter-spacing: 1px; }
 
   .hidden { display: none !important; }
-  .err {
-    color: var(--warn);
-    font-size: 12px;
-    margin-top: 8px;
-    min-height: 16px;
-  }
+  .err { color: var(--warn); font-size: 12px; margin-top: 8px; min-height: 16px; }
 
   @media (max-width: 900px) {
     .app {
@@ -495,27 +329,23 @@
   </header>
 
   <aside class="sidebar" id="sidebar">
-    <!-- LOBBY -->
+    <!-- LOBBY (entry) -->
     <div id="lobby">
       <h2 class="panel-title">// initialize</h2>
       <div class="field">
         <label>your name</label>
         <input id="nameInput" maxlength="24" placeholder="enter your name" />
       </div>
-
       <div class="panel-section">
-        <h3 class="panel-section-title">// new colony settings</h3>
+        <h3 class="panel-section-title">// new colony</h3>
         <div class="field-row">
           <div class="field">
             <label>grid size</label>
             <select id="sizeSelect">
-              <option value="8">8 × 8</option>
-              <option value="10">10 × 10</option>
-              <option value="12">12 × 12</option>
-              <option value="14">14 × 14</option>
-              <option value="16" selected>16 × 16</option>
-              <option value="18">18 × 18</option>
-              <option value="20">20 × 20</option>
+              <option value="8">8 × 8</option><option value="10">10 × 10</option>
+              <option value="12">12 × 12</option><option value="14">14 × 14</option>
+              <option value="16">16 × 16</option><option value="18">18 × 18</option>
+              <option value="20" selected>20 × 20</option>
               <option value="24">24 × 24</option>
             </select>
           </div>
@@ -523,28 +353,35 @@
             <label>head spread</label>
             <select id="offsetSelect">
               <option value="1">close (1)</option>
-              <option value="2">2 from center</option>
-              <option value="3" selected>3 from center</option>
-              <option value="4">4 from center</option>
-              <option value="5">far (5)</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6" selected>6 from corner</option>
+              <option value="7">7</option>
+              <option value="8">far (8)</option>
             </select>
           </div>
         </div>
-        <label class="checkbox-row" style="display:none;">
-          <input type="checkbox" id="lookaheadToggle" checked />
-          <span>show upcoming pieces</span>
-        </label>
-        <div class="field" id="lookaheadCountField" style="display:none;">
-          <label>how many to show</label>
-          <select id="lookaheadCount">
-            <option value="3" selected>3 pieces</option>
+        <div class="field">
+          <label>eliminated colony</label>
+          <select id="elimFateSelect">
+            <option value="die" selected>cells die</option>
+            <option value="convert">cells convert to captor</option>
+            <option value="neutral">cells go neutral</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>win condition</label>
+          <select id="winConditionSelect">
+            <option value="last_standing" selected>last head standing</option>
+            <option value="first_death">first death ends game</option>
+            <option value="cell_count">last standing OR cell count</option>
           </select>
         </div>
         <button class="act" id="createBtn">Create New Colony</button>
       </div>
-
       <div class="or-divider">or</div>
-
       <div class="field">
         <label>room code</label>
         <input id="codeInput" class="code-input" maxlength="4" placeholder="XXXX" />
@@ -553,16 +390,23 @@
       <div class="err" id="lobbyErr"></div>
     </div>
 
-    <!-- WAITING -->
+    <!-- WAITING (slot config + start) -->
     <div id="waiting" class="hidden">
-      <h2 class="panel-title">// waiting</h2>
-      <p style="font-size:12px;color:var(--text-dim);line-height:1.6;">
-        Share this code with another player:
-      </p>
-      <div style="font-family:'VT323',monospace;font-size:48px;text-align:center;letter-spacing:8px;color:var(--p1);text-shadow:0 0 12px var(--p1-glow);margin:10px 0;" id="waitCode">────</div>
-      <p style="font-size:11px;color:var(--text-dim);text-align:center;letter-spacing:2px;">
-        connection pending…
-      </p>
+      <h2 class="panel-title">// lobby</h2>
+      <p style="font-size:12px;color:var(--text-dim);line-height:1.6;">Share this code:</p>
+      <div style="font-family:'VT323',monospace;font-size:42px;text-align:center;letter-spacing:8px;color:var(--p1);text-shadow:0 0 12px var(--p1-glow);margin:6px 0 14px;" id="waitCode">────</div>
+
+      <div id="slotConfig"></div>
+
+      <div class="panel-section" id="hostStartArea" style="display:none;">
+        <button class="act" id="startBtn">START GAME</button>
+        <div class="err" id="startErr"></div>
+      </div>
+      <div class="panel-section" id="guestWaitMsg" style="display:none;">
+        <p style="font-size:11px;color:var(--text-dim);text-align:center;letter-spacing:2px;">
+          waiting for host to start…
+        </p>
+      </div>
       <div class="room-info" id="waitInfo"></div>
     </div>
 
@@ -579,10 +423,7 @@
         </div>
       </div>
 
-      <button class="act danger" id="biteBtn" style="margin-top:12px;">
-        BITE (3)
-      </button>
-
+      <button class="act danger" id="biteBtn" style="margin-top:12px;">BITE (3)</button>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
         <button class="act" id="passBtn" style="margin-top:0;">PASS</button>
         <button class="act danger" id="resignBtn" style="margin-top:0;">RESIGN</button>
@@ -608,10 +449,9 @@
         <button id="quitBtn">MAIN MENU</button>
       </div>
     </div>
-
     <div class="game-over hidden" id="resignConfirm">
       <h1 style="color:var(--warn);">RESIGN?</h1>
-      <div class="sub">your opponent will win</div>
+      <div class="sub">you will be eliminated</div>
       <div style="display:flex; gap:12px;">
         <button id="resignYesBtn" style="border-color:var(--warn); color:var(--warn);">YES, RESIGN</button>
         <button id="resignNoBtn">CANCEL</button>
@@ -625,7 +465,7 @@
   </aside>
 
   <footer class="bar">
-    <span>WEBFUNGUS · networked colony game</span>
+    <span>WebFungus · grow, flank, consume</span>
     <span id="connStatus">○ disconnected</span>
   </footer>
 </div>
@@ -646,23 +486,24 @@ function rotate(cells, times) {
     out = out.map(([x,y])=>[-y,x]);
   const minX = Math.min(...out.map(([x])=>x));
   const minY = Math.min(...out.map(([,y])=>y));
-  return out.map(([x,y])=>[x-minX, y-minY]);
+  return out.map(([x,y])=>[x-minX,y-minY]);
 }
 
+// --- State ---
 let ws = null;
-let myIndex = null;
+let mySlotIdx = null;       // slot in lobby (0..3)
+let myPlayerIdx = null;     // game player index (0..N-1, or null in lobby)
 let lastState = null;
 let hover = { x: -1, y: -1 };
 let rotation = 0;
 let myRoom = null;
-let boardSize = 16;
-let biteMode = false; // toggled by Bite button
-let pulseT = 0; // animation time
-// Animation queue: entries are { cell:[x,y], type, startedAt, duration, color, fromColor }
-// type: 'place' (grow in), 'flip' (color crossfade), 'convert' (slow color crossfade), 'kill' (fade to empty), 'bite' (red flash)
+let boardSize = 20;
+let biteMode = false;
+let pulseT = 0;
 let anims = [];
-let lastSeenEventId = null; // tracks which lastEvents we've already converted to anims
+let lastSeenEventId = null;
 let pulseAnim = null;
+let pendingSlots = null; // host's local slot edits before sending
 
 function makeCode() {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -679,8 +520,7 @@ function buildWsUrl(room, name, role, extra = {}) {
 
 function connect(room, name, role, extra = {}) {
   myRoom = room;
-  const url = buildWsUrl(room, name, role, extra);
-  ws = new WebSocket(url);
+  ws = new WebSocket(buildWsUrl(room, name, role, extra));
   ws.onopen = () => {
     document.getElementById("connStatus").textContent = "● connected";
     document.getElementById("connStatus").style.color = "var(--p2)";
@@ -690,7 +530,7 @@ function connect(room, name, role, extra = {}) {
     document.getElementById("connStatus").style.color = "var(--warn)";
     if (!lastState && e.code !== 1000) {
       document.getElementById("lobbyErr").textContent =
-        e.reason || "connection failed (room may not exist or be full)";
+        e.reason || "connection failed (room full or already started)";
       document.getElementById("lobby").classList.remove("hidden");
       document.getElementById("waiting").classList.add("hidden");
       document.getElementById("gameInfo").classList.add("hidden");
@@ -704,37 +544,25 @@ function connect(room, name, role, extra = {}) {
       return;
     }
     if (msg.type === "lobby") {
-      myIndex = msg.yourIndex;
-      enterWaiting(myRoom, msg.settings);
+      mySlotIdx = msg.yourIndex;
+      myPlayerIdx = null;
+      enterWaiting(myRoom, msg);
       return;
     }
     if (msg.type === "state") {
-      myIndex = msg.yourIndex;
+      mySlotIdx = msg.yourIndex;
+      myPlayerIdx = msg.yourPlayerIdx;
       const wasNewGame = !lastState || lastState.size !== msg.size ||
         (lastState.moveLog && msg.moveLog && msg.moveLog.length < lastState.moveLog.length);
-      if (wasNewGame) {
-        anims = [];
-        lastSeenEventId = null;
-      }
-      // Ingest events from the server into our animation queue,
-      // before swapping in the new state so we can compare if needed.
+      if (wasNewGame) { anims = []; lastSeenEventId = null; }
       ingestEvents(msg);
       lastState = msg;
       boardSize = msg.size;
       enterGame();
       if (wasNewGame) fitCanvas();
-      // If turn flipped to opponent, exit bite mode
-      if (msg.turn !== myIndex) biteMode = false;
+      if (msg.turn !== myPlayerIdx) biteMode = false;
       render();
       return;
-    }
-    if (msg.type === "opponent_left") {
-      if (lastState) {
-        lastState.finished = true;
-        lastState.endReason = "forfeit";
-        lastState.winner = msg.winner;
-        render();
-      }
     }
   };
 }
@@ -749,16 +577,8 @@ function flashStatus(text) {
   const originalColor = status.style.color;
   status.textContent = "// " + text;
   status.style.color = "var(--warn)";
-  setTimeout(() => {
-    status.textContent = original;
-    status.style.color = originalColor;
-  }, 1500);
+  setTimeout(() => { status.textContent = original; status.style.color = originalColor; }, 1500);
 }
-
-document.getElementById("lookaheadToggle").addEventListener("change", (e) => {
-  document.getElementById("lookaheadCountField").style.display =
-    e.target.checked ? "block" : "none";
-});
 
 document.getElementById("createBtn").onclick = () => {
   const name = document.getElementById("nameInput").value.trim();
@@ -766,10 +586,14 @@ document.getElementById("createBtn").onclick = () => {
     document.getElementById("lobbyErr").textContent = "please enter your name";
     return;
   }
-  const size = document.getElementById("sizeSelect").value;
-  const offset = document.getElementById("offsetSelect").value;
+  const params = {
+    size: document.getElementById("sizeSelect").value,
+    offset: document.getElementById("offsetSelect").value,
+    elimFate: document.getElementById("elimFateSelect").value,
+    winCondition: document.getElementById("winConditionSelect").value,
+  };
   const code = makeCode();
-  connect(code, name, "create", { size, offset, lookahead: "3" });
+  connect(code, name, "create", params);
 };
 document.getElementById("joinBtn").onclick = () => {
   const name = document.getElementById("nameInput").value.trim();
@@ -787,13 +611,14 @@ document.getElementById("joinBtn").onclick = () => {
 document.getElementById("codeInput").addEventListener("input", (e) => {
   e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
 });
+
+document.getElementById("startBtn").onclick = () => {
+  send({ type: "start_game" });
+};
 document.getElementById("rematchBtn").onclick = () => send({ type: "rematch" });
 document.getElementById("quitBtn").onclick = () => {
   if (ws) ws.close();
-  // Reset UI to lobby
-  lastState = null;
-  myIndex = null;
-  myRoom = null;
+  lastState = null; mySlotIdx = null; myPlayerIdx = null; myRoom = null;
   document.getElementById("gameOver").classList.add("hidden");
   document.getElementById("gameInfo").classList.add("hidden");
   document.getElementById("waiting").classList.add("hidden");
@@ -803,7 +628,7 @@ document.getElementById("quitBtn").onclick = () => {
 };
 document.getElementById("passBtn").onclick = () => {
   if (!lastState || lastState.finished) return;
-  if (lastState.turn !== myIndex) return;
+  if (lastState.turn !== myPlayerIdx) return;
   send({ type: "pass" });
 };
 document.getElementById("resignBtn").onclick = () => {
@@ -817,32 +642,91 @@ document.getElementById("resignYesBtn").onclick = () => {
 document.getElementById("resignNoBtn").onclick = () => {
   document.getElementById("resignConfirm").classList.add("hidden");
 };
-
 document.getElementById("biteBtn").onclick = () => {
   if (!lastState || lastState.finished) return;
-  if (lastState.turn !== myIndex) return;
-  if (lastState.bitesRemaining[myIndex] <= 0) return;
+  if (lastState.turn !== myPlayerIdx) return;
+  if (lastState.bitesRemaining[myPlayerIdx] <= 0) return;
   biteMode = !biteMode;
   render();
 };
 
-function settingsHtml(s) {
-  if (!s) return "";
-  return (
-    `<div class="row"><span>grid</span><strong>${s.size} × ${s.size}</strong></div>` +
-    `<div class="row"><span>head spread</span><strong>${s.offset} from center</strong></div>` +
-    `<div class="row"><span>bites each</span><strong>3</strong></div>`
-  );
-}
-
-function enterWaiting(code, settings) {
+// --- Lobby waiting screen ---
+function enterWaiting(code, msg) {
   document.getElementById("lobby").classList.add("hidden");
   document.getElementById("waiting").classList.remove("hidden");
   document.getElementById("gameInfo").classList.add("hidden");
   document.getElementById("waitCode").textContent = code;
   document.getElementById("roomCodeDisplay").innerHTML = "ROOM <span>" + code + "</span>";
-  document.getElementById("waitInfo").innerHTML = settingsHtml(settings);
+  renderSlotConfig(msg);
+  document.getElementById("waitInfo").innerHTML = settingsHtml(msg.settings);
+  document.getElementById("hostStartArea").style.display = msg.isHost ? "block" : "none";
+  document.getElementById("guestWaitMsg").style.display = msg.isHost ? "none" : "block";
 }
+
+function renderSlotConfig(msg) {
+  const isHost = msg.isHost;
+  const slots = msg.slots;
+  const container = document.getElementById("slotConfig");
+  container.innerHTML = "";
+  for (let i = 0; i < 4; i++) {
+    const slot = slots[i];
+    const row = document.createElement("div");
+    row.className = "slot-row p" + (i + 1);
+    let dropdown = "";
+    if (isHost && i !== 0) {
+      // Host can change non-host slots
+      dropdown = `<select data-slot="${i}" class="slot-type-select">
+        <option value="human" ${slot.type === "human" ? "selected" : ""}>Human</option>
+        <option value="easy" ${slot.type === "easy" ? "selected" : ""}>Easy bot</option>
+        <option value="moderate" ${slot.type === "moderate" ? "selected" : ""}>Moderate bot</option>
+        <option value="hard" ${slot.type === "hard" ? "selected" : ""}>Hard bot</option>
+        <option value="empty" ${slot.type === "empty" ? "selected" : ""}>Empty</option>
+      </select>`;
+    } else {
+      // Show as readonly
+      const labels = { human: "Human", easy: "Easy bot", moderate: "Moderate bot", hard: "Hard bot", empty: "Empty" };
+      dropdown = `<div class="name">${labels[slot.type] || "?"}</div>`;
+    }
+    let nameDisplay = "";
+    if (slot.type === "human" && slot.occupied && slot.name) {
+      nameDisplay = `<div class="name" style="font-size:10px;"><strong>${escapeHtml(slot.name)}</strong>${i === msg.yourIndex ? " (you)" : ""}</div>`;
+    } else if (slot.type === "human" && !slot.occupied) {
+      nameDisplay = `<div class="name" style="font-size:10px;color:var(--text-dim);">open</div>`;
+    } else if (slot.type !== "empty" && slot.type !== "human") {
+      nameDisplay = `<div class="name" style="font-size:10px;color:var(--text-dim);">— bot —</div>`;
+    } else {
+      nameDisplay = `<div class="name" style="font-size:10px;color:var(--text-dim);">—</div>`;
+    }
+    row.innerHTML = `<div class="num">${i + 1}</div>
+      <div>${dropdown}${nameDisplay}</div>`;
+    container.appendChild(row);
+  }
+  // Wire up the selects
+  if (isHost) {
+    container.querySelectorAll(".slot-type-select").forEach(sel => {
+      sel.addEventListener("change", () => {
+        const newSlots = msg.slots.map((s, i) => ({
+          type: i === 0 ? "human" : (i === parseInt(sel.dataset.slot, 10) ? sel.value : msg.slots[i].type),
+        }));
+        send({ type: "config_slots", slots: newSlots });
+      });
+    });
+  }
+}
+
+function settingsHtml(s) {
+  if (!s) return "";
+  const elimLabels = { die: "die", convert: "convert", neutral: "go neutral" };
+  const winLabels = { last_standing: "last head standing", first_death: "first death ends", cell_count: "last standing / cell count" };
+  return (
+    `<div class="row"><span>grid</span><strong>${s.size} × ${s.size}</strong></div>` +
+    `<div class="row"><span>head spread</span><strong>${s.offset}</strong></div>` +
+    `<div class="row"><span>eliminated</span><strong>${elimLabels[s.elimFate] || s.elimFate}</strong></div>` +
+    `<div class="row"><span>win</span><strong>${winLabels[s.winCondition] || s.winCondition}</strong></div>` +
+    `<div class="row"><span>bites each</span><strong>3</strong></div>`
+  );
+}
+
 function enterGame() {
   document.getElementById("lobby").classList.add("hidden");
   document.getElementById("waiting").classList.add("hidden");
@@ -851,6 +735,7 @@ function enterGame() {
   document.getElementById("gameRoomInfo").innerHTML = settingsHtml(lastState.settings);
 }
 
+// --- Canvas + rendering ---
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 let CELL = 36;
@@ -870,468 +755,42 @@ function getCSS(name) {
 function colorFor(playerNum) {
   if (playerNum === 1) return getCSS("--p1");
   if (playerNum === 2) return getCSS("--p2");
+  if (playerNum === 3) return getCSS("--p3");
+  if (playerNum === 4) return getCSS("--p4");
+  if (playerNum === -1) return getCSS("--neutral");
   return null;
 }
 function glowFor(playerNum) {
   if (playerNum === 1) return getCSS("--p1-glow");
   if (playerNum === 2) return getCSS("--p2-glow");
+  if (playerNum === 3) return getCSS("--p3-glow");
+  if (playerNum === 4) return getCSS("--p4-glow");
+  if (playerNum === -1) return getCSS("--neutral-glow");
   return null;
 }
 
-// === Animation system ===
-// Server sends `lastEvents` describing what just happened. We turn each affected
-// cell into a short-lived animation entry. Render applies overlays based on the
-// animation's progress (0..1).
-//
-// We attach a unique id to each `lastEvents` payload so we don't double-ingest
-// the same event when the state happens to be re-broadcast.
-function ingestEvents(msg) {
-  const e = msg.lastEvents;
-  if (!e) return;
-  // Use a stable identity: turn count + kind. Cheap and good enough since the
-  // server only sets lastEvents when something actually happened.
-  const id = (msg.moveLog ? msg.moveLog.length : 0) + ":" + e.kind;
-  if (lastSeenEventId === id) return;
-  lastSeenEventId = id;
-
-  const now = performance.now();
-  if (e.kind === "place") {
-    // Placed cells grow in
-    for (const [x, y] of e.placed || []) {
-      anims.push({ x, y, type: "place", startedAt: now, duration: 280, owner: e.player + 1 });
-    }
-    // Captured cells flip color (with a tiny stagger for cascade feel)
-    let i = 0;
-    for (const [x, y] of e.flipped || []) {
-      anims.push({ x, y, type: "flip", startedAt: now + 60 + (i * 12), duration: 360, owner: e.player + 1 });
-      i++;
-    }
-    // Converted cells (orphan absorbed) — appear later, slower
-    let j = 0;
-    for (const [x, y] of e.converted || []) {
-      anims.push({ x, y, type: "convert", startedAt: now + 200 + (j * 14), duration: 520, owner: e.player + 1 });
-      j++;
-    }
-  } else if (e.kind === "bite") {
-    if (e.bitten) {
-      const [bx, by] = e.bitten;
-      anims.push({ x: bx, y: by, type: "bite", startedAt: now, duration: 380 });
-    }
-    let k = 0;
-    for (const [x, y] of e.killed || []) {
-      anims.push({ x, y, type: "kill", startedAt: now + 120 + (k * 12), duration: 420 });
-      k++;
-    }
-  }
-}
-
-function activeAnims(now) {
-  // Drop expired ones
-  anims = anims.filter(a => now < a.startedAt + a.duration);
-  return anims;
-}
-
-// Get progress (0..1) of an animation, with optional easing.
-function animProgress(a, now) {
-  if (now < a.startedAt) return 0;
-  const t = Math.min(1, (now - a.startedAt) / a.duration);
-  return t;
-}
-
-// ease-out: starts fast, slows. Good for "settle in" feel.
-function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
-function easeInOut(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2; }
-
-// Render a single animation overlay on top of the cell.
-function drawAnim(a, now) {
-  const t = animProgress(a, now);
-  const px = a.x * CELL;
-  const py = a.y * CELL;
-
-  if (a.type === "place") {
-    // Cell grows from center; brief bright glow
-    const e = easeOut(t);
-    const size = (CELL - 4) * e;
-    const offset = (CELL - size) / 2;
-    const color = colorFor(a.owner);
-    const glow = glowFor(a.owner);
-    // Draw the cell at scaled size, brightening then settling
-    ctx.shadowColor = glow;
-    ctx.shadowBlur = CELL * (0.6 - 0.3 * e);
-    ctx.fillStyle = color;
-    ctx.globalAlpha = 1;
-    ctx.fillRect(px + offset, py + offset, size, size);
-    ctx.shadowBlur = 0;
-    // Brief flash overlay early in the animation
-    if (t < 0.45) {
-      ctx.fillStyle = glow;
-      ctx.globalAlpha = (1 - t / 0.45) * 0.55;
-      ctx.fillRect(px + offset, py + offset, size, size);
-      ctx.globalAlpha = 1;
-    }
-  } else if (a.type === "flip") {
-    // Color crossfade with a white flash mid-way
-    const e = easeInOut(t);
-    const color = colorFor(a.owner);
-    const glow = glowFor(a.owner);
-    ctx.shadowColor = glow;
-    ctx.shadowBlur = CELL * 0.35 * e;
-    ctx.fillStyle = color;
-    ctx.globalAlpha = e;  // fade in over old color
-    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
-    ctx.shadowBlur = 0;
-    // Flash peak around t=0.5
-    const flash = Math.max(0, 1 - Math.abs(t - 0.5) * 4);
-    if (flash > 0.05) {
-      ctx.fillStyle = "#ffffff";
-      ctx.globalAlpha = flash * 0.45;
-      ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
-    }
-    ctx.globalAlpha = 1;
-  } else if (a.type === "convert") {
-    // Slower color crossfade with no flash, to convey "absorption"
-    const e = easeInOut(t);
-    const color = colorFor(a.owner);
-    const glow = glowFor(a.owner);
-    ctx.shadowColor = glow;
-    ctx.shadowBlur = CELL * 0.25 * e;
-    ctx.fillStyle = color;
-    ctx.globalAlpha = e;
-    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
-    ctx.shadowBlur = 0;
-    // Outline pulse showing it's being absorbed
-    ctx.strokeStyle = glow;
-    ctx.lineWidth = 2;
-    ctx.globalAlpha = (1 - e) * 0.7;
-    ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
-    ctx.globalAlpha = 1;
-  } else if (a.type === "bite") {
-    // Red flash that fades out — cell is becoming empty
-    const fadeIn = Math.min(1, t * 4);  // 0..0.25 ramps in
-    const fadeOut = Math.max(0, 1 - (t - 0.3) / 0.7);  // after 0.3, fade out
-    const intensity = t < 0.3 ? fadeIn : fadeOut;
-    ctx.fillStyle = getCSS("--warn");
-    ctx.globalAlpha = intensity * 0.85;
-    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
-    ctx.shadowColor = getCSS("--warn-glow");
-    ctx.shadowBlur = CELL * 0.5 * intensity;
-    ctx.strokeStyle = getCSS("--warn-glow");
-    ctx.lineWidth = 3;
-    ctx.globalAlpha = intensity;
-    ctx.beginPath();
-    ctx.moveTo(px + 6, py + 6);
-    ctx.lineTo(px + CELL - 6, py + CELL - 6);
-    ctx.moveTo(px + CELL - 6, py + 6);
-    ctx.lineTo(px + 6, py + CELL - 6);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    ctx.globalAlpha = 1;
-  } else if (a.type === "kill") {
-    // Fade-out: pretend the cell is still there at decreasing alpha,
-    // so the death has a visible decay. We don't know the owner color from
-    // the event (the cell is already gone server-side), but we can darken.
-    const e = easeOut(t);
-    ctx.fillStyle = getCSS("--warn");
-    ctx.globalAlpha = (1 - e) * 0.5;
-    ctx.fillRect(px + 3, py + 3, CELL - 6, CELL - 6);
-    ctx.strokeStyle = getCSS("--warn");
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = (1 - e) * 0.7;
-    ctx.setLineDash([2, 2]);
-    ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-  }
-}
-
-// Returns a Set of "x,y" strings of cells currently being animated with type "place"
-// (so the static cell drawing can skip them and let the animation own the cell).
-function suppressedCellsForPlace(now) {
-  const s = new Set();
-  for (const a of anims) {
-    if (a.type === "place" && now < a.startedAt + a.duration) {
-      s.add(`${a.x},${a.y}`);
-    }
-  }
-  return s;
-}
-
-function render() {
-  if (!lastState) return;
-  const { board, turn, nextPiece, finished, heads, threats } = lastState;
-  const now = performance.now();
-  activeAnims(now);  // clean up expired
-
-  ctx.fillStyle = getCSS("--board-bg");
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.strokeStyle = getCSS("--grid-strong");
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= boardSize; i++) {
-    ctx.beginPath(); ctx.moveTo(i*CELL, 0); ctx.lineTo(i*CELL, boardSize*CELL); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, i*CELL); ctx.lineTo(boardSize*CELL, i*CELL); ctx.stroke();
-  }
-
-  // Cells with active "place" animations should be drawn by the animation,
-  // not the static path — otherwise we'd see a fully-grown cell underneath
-  // the growing one.
-  const suppressed = suppressedCellsForPlace(now);
-
-  // Cells (skipping head positions — heads draw on top)
-  for (let y = 0; y < boardSize; y++) {
-    for (let x = 0; x < boardSize; x++) {
-      const v = board[y][x];
-      if (v === 0) continue;
-      if (heads && heads.some(h => h.x === x && h.y === y)) continue; // head drawn separately
-      if (suppressed.has(`${x},${y}`)) continue; // grow-in animation owns this cell
-      drawCell(x, y, v);
-    }
-  }
-
-  // Active animations on top of the static cells
-  for (const a of anims) {
-    drawAnim(a, now);
-  }
-
-  // Heads (draw on top of everything else, including animations)
-  if (heads) {
-    for (let i = 0; i < heads.length; i++) {
-      drawHead(heads[i], threats ? threats[i] : 0);
-    }
-  }
-
-  // Hover preview
-  if (!finished && turn === myIndex && hover.x >= 0) {
-    if (biteMode) {
-      drawBitePreview(hover.x, hover.y);
-      // Preview which cells would be killed by this bite
-      const valid = checkValidBite(hover.x, hover.y, myIndex + 1, board, heads);
-      if (valid) {
-        const preview = previewBite(hover.x, hover.y, myIndex + 1, board, heads);
-        for (const [x, y] of preview.killed) {
-          drawDeathOutline(x, y);
-        }
-      }
-    } else if (nextPiece[myIndex]) {
-      const shape = rotate(SHAPES[nextPiece[myIndex]], rotation);
-      const cells = shape.map(([dx, dy]) => [hover.x + dx, hover.y + dy]);
-      const valid = checkValidPlacement(cells, myIndex + 1, board, heads);
-      for (const [x, y] of cells) {
-        if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) continue;
-        const color = valid ? colorFor(myIndex + 1) : getCSS("--warn");
-        drawCellGhost(x, y, color);
-      }
-      // Preview captures and conversions
-      if (valid) {
-        const preview = previewPlacement(cells, myIndex + 1, board, heads);
-        const myColor = colorFor(myIndex + 1);
-        for (const [x, y] of preview.flipped) {
-          drawCaptureOutline(x, y, myColor, "flip");
-        }
-        for (const [x, y] of preview.converted) {
-          drawCaptureOutline(x, y, myColor, "convert");
-        }
-      }
-    }
-  }
-
-  updateSidebar();
-  updateLog();
-  updateGameOver();
-  updateBiteButton();
-}
-
-function drawCell(x, y, playerNum) {
-  const px = x * CELL;
-  const py = y * CELL;
-  const color = colorFor(playerNum);
-  const glow = glowFor(playerNum);
-  ctx.shadowColor = glow;
-  ctx.shadowBlur = CELL * 0.35;
-  ctx.fillStyle = color;
-  ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = glow;
-  ctx.globalAlpha = 0.3;
-  ctx.fillRect(px + 2, py + 2, CELL - 4, Math.max(2, CELL * 0.12));
-  ctx.globalAlpha = 1;
-}
-
-// The fungal-eye head — distinct from regular cells.
-function drawHead(head, threatLevel) {
-  const px = head.x * CELL;
-  const py = head.y * CELL;
-  const cx = px + CELL / 2;
-  const cy = py + CELL / 2;
-  const r = CELL * 0.5;
-  const color = colorFor(head.playerNum);
-  const glow = glowFor(head.playerNum);
-
-  // Threat pulse: when threatened, a red halo grows/shrinks
-  if (threatLevel >= 2) {
-    const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
-    ctx.shadowColor = getCSS("--warn-glow");
-    ctx.shadowBlur = CELL * (0.6 + pulse * 0.6);
-    ctx.fillStyle = getCSS("--warn");
-    ctx.globalAlpha = 0.3 + pulse * 0.3;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 1.0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-
-  // Outer body — a slightly oversized colored disc
-  ctx.shadowColor = glow;
-  ctx.shadowBlur = CELL * 0.5;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r * 0.85, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Inner darker ring (the "iris")
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = getCSS("--bg-deep");
-  ctx.beginPath();
-  ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Glowing pupil — animates with subtle breathing
-  const breath = 0.85 + 0.15 * Math.sin(pulseT * 0.005);
-  ctx.shadowColor = glow;
-  ctx.shadowBlur = CELL * 0.35;
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r * 0.22 * breath, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Vertical slit to suggest a sinister mushroom-eye
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = getCSS("--bg-deep");
-  ctx.fillRect(cx - r * 0.04, cy - r * 0.18, r * 0.08, r * 0.36);
-
-  // Spore-flecks around the head (4 small dots at NE, NW, SE, SW)
-  ctx.fillStyle = color;
-  ctx.globalAlpha = 0.7;
-  const fleckR = r * 0.08;
-  for (const [dx, dy] of [[-0.55,-0.55],[0.55,-0.55],[-0.55,0.55],[0.55,0.55]]) {
-    ctx.beginPath();
-    ctx.arc(cx + r * dx, cy + r * dy, fleckR, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.shadowBlur = 0;
-}
-
-function drawCellGhost(x, y, color) {
-  const px = x * CELL;
-  const py = y * CELL;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.globalAlpha = 0.95;
-  ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
-  ctx.fillStyle = color;
-  ctx.globalAlpha = 0.25;
-  ctx.fillRect(px + 3, py + 3, CELL - 6, CELL - 6);
-  ctx.globalAlpha = 1;
-}
-
-function drawBitePreview(x, y) {
-  if (!lastState) return;
-  if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return;
-  const valid = checkValidBite(x, y, myIndex + 1, lastState.board, lastState.heads);
-  const px = x * CELL;
-  const py = y * CELL;
-
-  if (valid) {
-    // Pulsing red overlay on the targeted enemy cell
-    const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
-    ctx.fillStyle = getCSS("--warn");
-    ctx.globalAlpha = 0.4 + pulse * 0.3;
-    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
-    ctx.shadowColor = getCSS("--warn-glow");
-    ctx.shadowBlur = CELL * 0.4;
-    ctx.strokeStyle = getCSS("--warn-glow");
-    ctx.lineWidth = 3;
-    ctx.globalAlpha = 1;
-    ctx.beginPath();
-    // Bite-mark slash
-    ctx.moveTo(px + 6, py + 6);
-    ctx.lineTo(px + CELL - 6, py + CELL - 6);
-    ctx.moveTo(px + CELL - 6, py + 6);
-    ctx.lineTo(px + 6, py + CELL - 6);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    ctx.globalAlpha = 1;
-  } else {
-    // Subtle "no" indicator
-    ctx.strokeStyle = getCSS("--text-dim");
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.5;
-    ctx.strokeRect(px + 4, py + 4, CELL - 8, CELL - 8);
-    ctx.globalAlpha = 1;
-  }
-}
-
-// Outline a cell that WOULD be captured/converted on this hover.
-// kind = "flip" (direct capture) or "convert" (orphan absorb)
-function drawCaptureOutline(x, y, color, kind) {
-  const px = x * CELL;
-  const py = y * CELL;
-  const pulse = 0.6 + 0.4 * Math.sin(pulseT * 0.008);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = kind === "convert" ? 2 : 3;
-  ctx.globalAlpha = 0.85 + pulse * 0.15;
-  // Solid for direct flips, dashed for orphan conversions (different "feel")
-  if (kind === "convert") ctx.setLineDash([4, 3]);
-  ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
-  ctx.setLineDash([]);
-  // Soft fill so the player can see at a glance what would change
-  ctx.fillStyle = color;
-  ctx.globalAlpha = 0.18 + pulse * 0.10;
-  ctx.fillRect(px + 3, py + 3, CELL - 6, CELL - 6);
-  ctx.globalAlpha = 1;
-}
-
-// Outline an enemy cell that would die from a bite (orphaned)
-function drawDeathOutline(x, y) {
-  const px = x * CELL;
-  const py = y * CELL;
-  const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.010);
-  ctx.strokeStyle = getCSS("--warn");
-  ctx.lineWidth = 2;
-  ctx.globalAlpha = 0.7 + pulse * 0.2;
-  ctx.setLineDash([3, 3]);
-  ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
-  ctx.setLineDash([]);
-  ctx.globalAlpha = 1;
-}
-
+// --- Validity helpers (client-side simulation) ---
 function checkValidPlacement(cells, playerNum, board, heads) {
   for (const [x, y] of cells) {
     if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return false;
     if (board[y][x] !== 0) return false;
-    if (heads && heads.some(h => h.x === x && h.y === y)) return false;
+    if (heads && heads.some(h => h && h.x === x && h.y === y)) return false;
   }
   let touches = false;
   for (const [x, y] of cells) {
     for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
       const nx = x + dx, ny = y + dy;
       if (nx >= 0 && nx < boardSize && ny >= 0 && ny < boardSize
-          && board[ny][nx] === playerNum) {
-        touches = true;
-      }
+          && board[ny][nx] === playerNum) touches = true;
     }
   }
   return touches;
 }
-
 function checkValidBite(x, y, playerNum, board, heads) {
   if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return false;
-  if (heads && heads.some(h => h.x === x && h.y === y)) return false;
-  const enemy = playerNum === 1 ? 2 : 1;
-  // Must be an enemy cell
-  if (board[y][x] !== enemy) return false;
-  // Must be adjacent to one of mine
+  if (heads && heads.some(h => h && h.x === x && h.y === y)) return false;
+  const v = board[y][x];
+  if (v === 0 || v === -1 || v === playerNum) return false;
   for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
     const nx = x + dx, ny = y + dy;
     if (nx >= 0 && nx < boardSize && ny >= 0 && ny < boardSize
@@ -1340,13 +799,11 @@ function checkValidBite(x, y, playerNum, board, heads) {
   return false;
 }
 
-// Client-side capture/orphan simulation, mirroring the server logic.
-// Used for the "preview what this move would do" feature.
+// --- Capture/orphan simulation for preview ---
 function simCapture(board, playerNum, heads) {
-  const enemy = playerNum === 1 ? 2 : 1;
-  const isHead = (x, y) => heads.some(h => h.x === x && h.y === y);
+  const isHead = (x, y) => heads.some(h => h && h.x === x && h.y === y);
   const headOwner = (x, y) => {
-    const h = heads.find(h => h.x === x && h.y === y);
+    const h = heads.find(h => h && h.x === x && h.y === y);
     return h ? h.playerNum : null;
   };
   const isMine = (x, y) => {
@@ -1357,7 +814,8 @@ function simCapture(board, playerNum, heads) {
   const isFlippableEnemy = (x, y) => {
     if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return false;
     if (isHead(x, y)) return false;
-    return board[y][x] === enemy;
+    const v = board[y][x];
+    return v > 0 && v !== playerNum;
   };
   const DIRS = [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,1],[1,-1],[-1,1]];
   const flipped = [];
@@ -1388,15 +846,11 @@ function simCapture(board, playerNum, heads) {
   }
   return flipped;
 }
-
-// Returns orphan cells. fate "convert" turns them into the OTHER player's color.
-// fate "die" makes them empty.
-function simOrphans(board, heads, fate) {
+function simOrphans(board, heads, fate, convertTo) {
   const result = [];
-  for (let p = 1; p <= 2; p++) {
-    const head = heads.find(h => h.playerNum === p);
+  for (const head of heads) {
     if (!head) continue;
-    // BFS from head through cells of own color
+    const p = head.playerNum;
     const reached = new Set([`${head.x},${head.y}`]);
     const stack = [[head.x, head.y]];
     while (stack.length) {
@@ -1414,40 +868,318 @@ function simOrphans(board, heads, fate) {
     for (let y = 0; y < boardSize; y++) {
       for (let x = 0; x < boardSize; x++) {
         if (board[y][x] !== p) continue;
-        if (heads.some(h => h.x === x && h.y === y)) continue;
+        if (heads.some(h => h && h.x === x && h.y === y)) continue;
         if (!reached.has(`${x},${y}`)) {
           result.push({ x, y, owner: p });
           if (fate === "die") board[y][x] = 0;
-          else if (fate === "convert") board[y][x] = p === 1 ? 2 : 1;
+          else if (fate === "convert") board[y][x] = (convertTo && convertTo[p] != null) ? convertTo[p] : 0;
         }
       }
     }
   }
   return result;
 }
-
-// Simulate a placement and return what would change.
 function previewPlacement(cells, playerNum, board, heads) {
-  // Clone board
   const sim = board.map(row => row.slice());
   for (const [x, y] of cells) sim[y][x] = playerNum;
   const flipped = simCapture(sim, playerNum, heads);
-  const orphans = simOrphans(sim, heads, "convert");
-  // Orphans here are anything disconnected — for preview, we want only the OPPONENT's
-  // orphans (which become ours)
-  const enemy = playerNum === 1 ? 2 : 1;
-  const converted = orphans.filter(o => o.owner === enemy).map(o => [o.x, o.y]);
+  const convertTo = {};
+  for (const h of heads) if (h) convertTo[h.playerNum] = playerNum;
+  const orphans = simOrphans(sim, heads, "convert", convertTo);
+  const converted = orphans.filter(o => o.owner !== playerNum).map(o => [o.x, o.y]);
   return { flipped, converted };
 }
-
-// Simulate a bite and return what would change.
 function previewBite(x, y, playerNum, board, heads) {
   const sim = board.map(row => row.slice());
   sim[y][x] = 0;
   const orphans = simOrphans(sim, heads, "die");
-  const enemy = playerNum === 1 ? 2 : 1;
-  const killed = orphans.filter(o => o.owner === enemy).map(o => [o.x, o.y]);
+  const killed = orphans.filter(o => o.owner !== playerNum).map(o => [o.x, o.y]);
   return { bitten: [x, y], killed };
+}
+
+// --- Animations ---
+function ingestEvents(msg) {
+  const e = msg.lastEvents;
+  if (!e) return;
+  const id = (msg.moveLog ? msg.moveLog.length : 0) + ":" + e.kind;
+  if (lastSeenEventId === id) return;
+  lastSeenEventId = id;
+  const now = performance.now();
+  const moverNum = (e.player != null) ? (e.player + 1) : null;
+  if (e.kind === "place") {
+    for (const [x, y] of e.placed || []) {
+      anims.push({ x, y, type: "place", startedAt: now, duration: 280, owner: moverNum });
+    }
+    let i = 0;
+    for (const [x, y] of e.flipped || []) {
+      anims.push({ x, y, type: "flip", startedAt: now + 60 + (i * 12), duration: 360, owner: moverNum });
+      i++;
+    }
+    let j = 0;
+    for (const [x, y] of e.converted || []) {
+      anims.push({ x, y, type: "convert", startedAt: now + 200 + (j * 14), duration: 520, owner: moverNum });
+      j++;
+    }
+  } else if (e.kind === "bite") {
+    if (e.bitten) {
+      const [bx, by] = e.bitten;
+      anims.push({ x: bx, y: by, type: "bite", startedAt: now, duration: 380 });
+    }
+    let k = 0;
+    for (const [x, y] of e.killed || []) {
+      anims.push({ x, y, type: "kill", startedAt: now + 120 + (k * 12), duration: 420 });
+      k++;
+    }
+  }
+}
+function animProgress(a, now) {
+  if (now < a.startedAt) return 0;
+  return Math.min(1, (now - a.startedAt) / a.duration);
+}
+function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+function easeInOut(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2; }
+function drawAnim(a, now) {
+  const t = animProgress(a, now);
+  const px = a.x * CELL, py = a.y * CELL;
+  if (a.type === "place") {
+    const e = easeOut(t);
+    const size = (CELL - 4) * e;
+    const offset = (CELL - size) / 2;
+    const color = colorFor(a.owner), glow = glowFor(a.owner);
+    ctx.shadowColor = glow; ctx.shadowBlur = CELL * (0.6 - 0.3 * e);
+    ctx.fillStyle = color; ctx.globalAlpha = 1;
+    ctx.fillRect(px + offset, py + offset, size, size);
+    ctx.shadowBlur = 0;
+    if (t < 0.45) {
+      ctx.fillStyle = glow;
+      ctx.globalAlpha = (1 - t / 0.45) * 0.55;
+      ctx.fillRect(px + offset, py + offset, size, size);
+      ctx.globalAlpha = 1;
+    }
+  } else if (a.type === "flip") {
+    const e = easeInOut(t);
+    const color = colorFor(a.owner), glow = glowFor(a.owner);
+    ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.35 * e;
+    ctx.fillStyle = color; ctx.globalAlpha = e;
+    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.shadowBlur = 0;
+    const flash = Math.max(0, 1 - Math.abs(t - 0.5) * 4);
+    if (flash > 0.05) {
+      ctx.fillStyle = "#ffffff"; ctx.globalAlpha = flash * 0.45;
+      ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    }
+    ctx.globalAlpha = 1;
+  } else if (a.type === "convert") {
+    const e = easeInOut(t);
+    const color = colorFor(a.owner), glow = glowFor(a.owner);
+    ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.25 * e;
+    ctx.fillStyle = color; ctx.globalAlpha = e;
+    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = glow; ctx.lineWidth = 2;
+    ctx.globalAlpha = (1 - e) * 0.7;
+    ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.globalAlpha = 1;
+  } else if (a.type === "bite") {
+    const fadeIn = Math.min(1, t * 4);
+    const fadeOut = Math.max(0, 1 - (t - 0.3) / 0.7);
+    const intensity = t < 0.3 ? fadeIn : fadeOut;
+    ctx.fillStyle = getCSS("--warn"); ctx.globalAlpha = intensity * 0.85;
+    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.shadowColor = getCSS("--warn-glow"); ctx.shadowBlur = CELL * 0.5 * intensity;
+    ctx.strokeStyle = getCSS("--warn-glow"); ctx.lineWidth = 3; ctx.globalAlpha = intensity;
+    ctx.beginPath();
+    ctx.moveTo(px + 6, py + 6); ctx.lineTo(px + CELL - 6, py + CELL - 6);
+    ctx.moveTo(px + CELL - 6, py + 6); ctx.lineTo(px + 6, py + CELL - 6);
+    ctx.stroke(); ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  } else if (a.type === "kill") {
+    const e = easeOut(t);
+    ctx.fillStyle = getCSS("--warn"); ctx.globalAlpha = (1 - e) * 0.5;
+    ctx.fillRect(px + 3, py + 3, CELL - 6, CELL - 6);
+    ctx.strokeStyle = getCSS("--warn"); ctx.lineWidth = 1;
+    ctx.globalAlpha = (1 - e) * 0.7;
+    ctx.setLineDash([2, 2]);
+    ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+  }
+}
+function suppressedCellsForPlace(now) {
+  const s = new Set();
+  for (const a of anims) {
+    if (a.type === "place" && now < a.startedAt + a.duration) {
+      s.add(`${a.x},${a.y}`);
+    }
+  }
+  return s;
+}
+
+function render() {
+  if (!lastState) return;
+  const { board, turn, nextPiece, finished, heads, threats } = lastState;
+  const now = performance.now();
+  anims = anims.filter(a => now < a.startedAt + a.duration);
+
+  ctx.fillStyle = getCSS("--board-bg");
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = getCSS("--grid-strong"); ctx.lineWidth = 1;
+  for (let i = 0; i <= boardSize; i++) {
+    ctx.beginPath(); ctx.moveTo(i*CELL, 0); ctx.lineTo(i*CELL, boardSize*CELL); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i*CELL); ctx.lineTo(boardSize*CELL, i*CELL); ctx.stroke();
+  }
+  const suppressed = suppressedCellsForPlace(now);
+  for (let y = 0; y < boardSize; y++) {
+    for (let x = 0; x < boardSize; x++) {
+      const v = board[y][x];
+      if (v === 0) continue;
+      if (heads && heads.some(h => h && h.x === x && h.y === y)) continue;
+      if (suppressed.has(`${x},${y}`)) continue;
+      drawCell(x, y, v);
+    }
+  }
+  for (const a of anims) drawAnim(a, now);
+  if (heads) {
+    for (let i = 0; i < heads.length; i++) {
+      if (!heads[i]) continue;
+      drawHead(heads[i], threats ? threats[i] : 0);
+    }
+  }
+
+  // Hover preview
+  if (!finished && turn === myPlayerIdx && hover.x >= 0) {
+    if (biteMode) {
+      drawBitePreview(hover.x, hover.y);
+      const valid = checkValidBite(hover.x, hover.y, myPlayerIdx + 1, board, heads);
+      if (valid) {
+        const preview = previewBite(hover.x, hover.y, myPlayerIdx + 1, board, heads);
+        for (const [x, y] of preview.killed) drawDeathOutline(x, y);
+      }
+    } else if (nextPiece[myPlayerIdx]) {
+      const shape = rotate(SHAPES[nextPiece[myPlayerIdx]], rotation);
+      const cells = shape.map(([dx, dy]) => [hover.x + dx, hover.y + dy]);
+      const valid = checkValidPlacement(cells, myPlayerIdx + 1, board, heads);
+      for (const [x, y] of cells) {
+        if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) continue;
+        const color = valid ? colorFor(myPlayerIdx + 1) : getCSS("--warn");
+        drawCellGhost(x, y, color);
+      }
+      if (valid) {
+        const preview = previewPlacement(cells, myPlayerIdx + 1, board, heads);
+        const myColor = colorFor(myPlayerIdx + 1);
+        for (const [x, y] of preview.flipped) drawCaptureOutline(x, y, myColor, "flip");
+        for (const [x, y] of preview.converted) drawCaptureOutline(x, y, myColor, "convert");
+      }
+    }
+  }
+
+  updateSidebar();
+  updateLog();
+  updateGameOver();
+  updateBiteButton();
+}
+
+function drawCell(x, y, playerNum) {
+  const px = x * CELL, py = y * CELL;
+  const color = colorFor(playerNum), glow = glowFor(playerNum);
+  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.35;
+  ctx.fillStyle = color;
+  ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = glow; ctx.globalAlpha = 0.3;
+  ctx.fillRect(px + 2, py + 2, CELL - 4, Math.max(2, CELL * 0.12));
+  ctx.globalAlpha = 1;
+}
+
+function drawHead(head, threatLevel) {
+  const px = head.x * CELL, py = head.y * CELL;
+  const cx = px + CELL / 2, cy = py + CELL / 2;
+  const r = CELL * 0.5;
+  const color = colorFor(head.playerNum), glow = glowFor(head.playerNum);
+  if (threatLevel >= 2) {
+    const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
+    ctx.shadowColor = getCSS("--warn-glow");
+    ctx.shadowBlur = CELL * (0.6 + pulse * 0.6);
+    ctx.fillStyle = getCSS("--warn");
+    ctx.globalAlpha = 0.3 + pulse * 0.3;
+    ctx.beginPath(); ctx.arc(cx, cy, r * 1.0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.5;
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(cx, cy, r * 0.85, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = getCSS("--bg-deep");
+  ctx.beginPath(); ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2); ctx.fill();
+  const breath = 0.85 + 0.15 * Math.sin(pulseT * 0.005);
+  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.35;
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(cx, cy, r * 0.22 * breath, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = getCSS("--bg-deep");
+  ctx.fillRect(cx - r * 0.04, cy - r * 0.18, r * 0.08, r * 0.36);
+  ctx.fillStyle = color; ctx.globalAlpha = 0.7;
+  const fleckR = r * 0.08;
+  for (const [dx, dy] of [[-0.55,-0.55],[0.55,-0.55],[-0.55,0.55],[0.55,0.55]]) {
+    ctx.beginPath();
+    ctx.arc(cx + r * dx, cy + r * dy, fleckR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawCellGhost(x, y, color) {
+  const px = x * CELL, py = y * CELL;
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = 0.95;
+  ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
+  ctx.fillStyle = color; ctx.globalAlpha = 0.25;
+  ctx.fillRect(px + 3, py + 3, CELL - 6, CELL - 6);
+  ctx.globalAlpha = 1;
+}
+
+function drawBitePreview(x, y) {
+  if (!lastState) return;
+  if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return;
+  const valid = checkValidBite(x, y, myPlayerIdx + 1, lastState.board, lastState.heads);
+  const px = x * CELL, py = y * CELL;
+  if (valid) {
+    const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
+    ctx.fillStyle = getCSS("--warn");
+    ctx.globalAlpha = 0.4 + pulse * 0.3;
+    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.shadowColor = getCSS("--warn-glow");
+    ctx.shadowBlur = CELL * 0.4;
+    ctx.strokeStyle = getCSS("--warn-glow");
+    ctx.lineWidth = 3; ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.moveTo(px + 6, py + 6); ctx.lineTo(px + CELL - 6, py + CELL - 6);
+    ctx.moveTo(px + CELL - 6, py + 6); ctx.lineTo(px + 6, py + CELL - 6);
+    ctx.stroke(); ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  } else {
+    ctx.strokeStyle = getCSS("--text-dim");
+    ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+    ctx.strokeRect(px + 4, py + 4, CELL - 8, CELL - 8);
+    ctx.globalAlpha = 1;
+  }
+}
+function drawCaptureOutline(x, y, color, kind) {
+  const px = x * CELL, py = y * CELL;
+  const pulse = 0.6 + 0.4 * Math.sin(pulseT * 0.008);
+  ctx.strokeStyle = color; ctx.lineWidth = kind === "convert" ? 2 : 3;
+  ctx.globalAlpha = 0.85 + pulse * 0.15;
+  if (kind === "convert") ctx.setLineDash([4, 3]);
+  ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
+  ctx.setLineDash([]);
+  ctx.fillStyle = color; ctx.globalAlpha = 0.18 + pulse * 0.10;
+  ctx.fillRect(px + 3, py + 3, CELL - 6, CELL - 6);
+  ctx.globalAlpha = 1;
+}
+function drawDeathOutline(x, y) {
+  const px = x * CELL, py = y * CELL;
+  const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.010);
+  ctx.strokeStyle = getCSS("--warn"); ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.7 + pulse * 0.2;
+  ctx.setLineDash([3, 3]);
+  ctx.strokeRect(px + 3, py + 3, CELL - 6, CELL - 6);
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
 }
 
 function pieceSvg(pieceType, w, h, color, padding = 2) {
@@ -1465,33 +1197,44 @@ function pieceSvg(pieceType, w, h, color, padding = 2) {
 function updateSidebar() {
   const cards = document.getElementById("playerCards");
   cards.innerHTML = "";
-  lastState.names.forEach((name, i) => {
+  // Build slot→playerIdx mapping for displaying labels
+  const slots = lastState.slots;
+  let pIdx = 0;
+  for (let slotIdx = 0; slotIdx < slots.length; slotIdx++) {
+    const slot = slots[slotIdx];
+    if (slot.type === "empty") continue;
+    const playerIdx = pIdx++;
+    const playerNum = playerIdx + 1;
     const card = document.createElement("div");
-    card.className = "player-card p" + (i + 1);
-    if (lastState.turn === i && !lastState.finished) card.classList.add("active");
-    if (lastState.threats && lastState.threats[i] >= 2 && !lastState.finished) {
-      card.classList.add("threatened");
+    card.className = "player-card p" + playerNum;
+    if (lastState.turn === playerIdx && !lastState.finished) card.classList.add("active");
+    if (lastState.eliminated && lastState.eliminated[playerIdx]) card.classList.add("eliminated");
+    if (lastState.threats && lastState.threats[playerIdx] >= 2 && !lastState.finished) card.classList.add("threatened");
+    let displayName = slot.name || ("P" + playerNum);
+    let badge = "";
+    if (slot.type !== "human") {
+      badge = ` <span class="badge">${slot.type.toUpperCase()}</span>`;
+      if (!slot.name) displayName = `Bot ${playerNum}`;
     }
-    const youTag = i === myIndex ? " <span style='color:var(--text-dim);font-size:10px;'>(YOU)</span>" : "";
-    const threatTag = (lastState.threats && lastState.threats[i] >= 2 && !lastState.finished)
+    const youTag = playerIdx === myPlayerIdx ? " <span style='color:var(--text-dim);font-size:10px;'>(YOU)</span>" : "";
+    const threatTag = (lastState.threats && lastState.threats[playerIdx] >= 2 && !lastState.finished && !(lastState.eliminated && lastState.eliminated[playerIdx]))
       ? " <span class='threat-tag'>HEAD AT RISK</span>" : "";
-    const pips = (lastState.bitesRemaining || [3,3])[i];
+    const pips = (lastState.bitesRemaining || [])[playerIdx] || 0;
     const bitePips = Array.from({length: 3}, (_, k) =>
       `<span class="bite-pip${k < pips ? '' : ' spent'}"></span>`
     ).join("");
     card.innerHTML =
-      `<div class='name'>${escapeHtml(name)}${youTag}${threatTag}</div>` +
-      `<div class='stat'>cells <strong>${lastState.counts[i]}</strong></div>` +
+      `<div class='name'>${escapeHtml(displayName)}${badge}${youTag}${threatTag}</div>` +
+      `<div class='stat'>cells <strong>${lastState.counts[playerIdx]}</strong></div>` +
       `<div class='bites-row'><span class='label'>BITES</span>${bitePips}</div>`;
     cards.appendChild(card);
-  });
+  }
 
-  // Current piece preview
+  // Piece preview
   const svg = document.getElementById("pieceSvg");
   const pieceLabel = document.getElementById("pieceLabel");
   const pieceHint = document.getElementById("pieceHint");
-  const myPiece = lastState.nextPiece[myIndex];
-
+  const myPiece = lastState.nextPiece[myPlayerIdx];
   if (biteMode) {
     pieceLabel.textContent = "BITE MODE";
     pieceLabel.style.color = "var(--warn)";
@@ -1511,93 +1254,97 @@ function updateSidebar() {
     const size = Math.min(140 / w, 80 / h);
     const ox = (140 - w * size) / 2;
     const oy = (80 - h * size) / 2;
-    const color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
+    const color = colorFor(myPlayerIdx + 1);
     svg.innerHTML = shape.map(([x, y]) =>
       `<rect x="${ox + x*size + 2}" y="${oy + y*size + 2}" width="${size-4}" height="${size-4}" fill="${color}" opacity="0.9"/>`
     ).join("");
     pieceHint.innerHTML = "<kbd>R</kbd> rotate &nbsp;·&nbsp; <kbd>Click</kbd> place";
   }
 
-  // Upcoming pieces
+  // Upcoming
   const upDisplay = document.getElementById("upcomingDisplay");
   const upRow = document.getElementById("upcomingRow");
   if (lastState.upcoming && lastState.upcoming.length > 0) {
     upDisplay.classList.remove("hidden");
-    const color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
-    const items = lastState.upcoming.map((p, i) => {
-      return `<svg viewBox="0 0 44 28">${pieceSvg(p, 44, 28, color)}</svg>` +
-             (i < lastState.upcoming.length - 1 ? '<span class="arrow">›</span>' : '');
-    });
+    const color = colorFor(myPlayerIdx + 1);
+    const items = lastState.upcoming.map((p, i) =>
+      `<svg viewBox="0 0 44 28">${pieceSvg(p, 44, 28, color)}</svg>` +
+      (i < lastState.upcoming.length - 1 ? '<span class="arrow">›</span>' : '')
+    );
     upRow.innerHTML = items.join("");
   } else {
     upDisplay.classList.add("hidden");
   }
 
-  // Status text
   const status = document.getElementById("boardStatus");
   if (lastState.finished) {
     status.textContent = "";
     status.classList.remove("bite-mode");
-  } else if (lastState.turn === myIndex) {
+  } else if (lastState.turn === myPlayerIdx) {
     if (biteMode) {
       status.textContent = "// BITE MODE — click an enemy cell adjacent to your colony";
       status.classList.add("bite-mode");
     } else {
       status.textContent = "// your move";
       status.classList.remove("bite-mode");
-      status.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
+      status.style.color = colorFor(myPlayerIdx + 1);
     }
   } else {
-    status.textContent = "// awaiting opponent";
+    const turnPlayerNum = lastState.turn + 1;
+    status.textContent = "// awaiting P" + turnPlayerNum;
     status.classList.remove("bite-mode");
     status.style.color = "var(--text-dim)";
   }
-
-  // Canvas cursor
   if (biteMode) canvas.classList.add("bite-mode");
   else canvas.classList.remove("bite-mode");
 }
 
 function updateBiteButton() {
   if (!lastState) return;
-  const myTurn = lastState.turn === myIndex && !lastState.finished;
-
+  const myTurn = lastState.turn === myPlayerIdx && !lastState.finished &&
+    !(lastState.eliminated && lastState.eliminated[myPlayerIdx]);
   const biteBtn = document.getElementById("biteBtn");
-  const remaining = (lastState.bitesRemaining || [3,3])[myIndex];
+  const remaining = (lastState.bitesRemaining || [])[myPlayerIdx] || 0;
   biteBtn.textContent = `BITE (${remaining})`;
   biteBtn.disabled = !myTurn || remaining <= 0;
   biteBtn.classList.toggle("active", biteMode);
-
   document.getElementById("passBtn").disabled = !myTurn;
-  document.getElementById("resignBtn").disabled = lastState.finished;
+  document.getElementById("resignBtn").disabled = lastState.finished ||
+    (lastState.eliminated && lastState.eliminated[myPlayerIdx]);
 }
 
 function updateLog() {
   const list = document.getElementById("logList");
   list.innerHTML = "";
   if (!lastState.moveLog) return;
+  // Get player names by walking slots
+  const playerNames = [];
+  let pi = 0;
+  for (const slot of lastState.slots) {
+    if (slot.type === "empty") continue;
+    let name = slot.name;
+    if (slot.type !== "human" && !name) name = `Bot ${pi + 1}`;
+    if (!name) name = `P${pi + 1}`;
+    playerNames.push(name);
+    pi++;
+  }
   lastState.moveLog.slice().reverse().forEach((entry, i) => {
     const turnNum = lastState.moveLog.length - i;
     const div = document.createElement("div");
     div.className = "log-entry p" + (entry.player + 1);
-    const playerName = lastState.names[entry.player] || ("P" + (entry.player + 1));
     const turnTag = `<span class="turn-num">${String(turnNum).padStart(3,"0")}</span>`;
+    const playerName = playerNames[entry.player] || ("P" + (entry.player + 1));
     const who = `<span class="who">${escapeHtml(playerName)}</span>`;
-    if (entry.skipped) {
-      div.innerHTML = `${turnTag} · ${who} skipped — no legal action`;
-    } else if (entry.passed) {
-      div.innerHTML = `${turnTag} · ${who} passed`;
-    } else if (entry.resigned) {
-      div.innerHTML = `${turnTag} · ${who} <span style="color:var(--warn);">RESIGNED</span>`;
-    } else if (entry.bite) {
-      const killText = entry.killed > 0
-        ? ` · <span class="flip">${entry.killed} killed</span>` : "";
+    if (entry.skipped) div.innerHTML = `${turnTag} · ${who} skipped — no legal action`;
+    else if (entry.passed) div.innerHTML = `${turnTag} · ${who} passed`;
+    else if (entry.eliminated) div.innerHTML = `${turnTag} · ${who} <span style="color:var(--warn);">ELIMINATED</span>`;
+    else if (entry.resigned) div.innerHTML = `${turnTag} · ${who} <span style="color:var(--warn);">RESIGNED</span>`;
+    else if (entry.bite) {
+      const killText = entry.killed > 0 ? ` · <span class="flip">${entry.killed} killed</span>` : "";
       div.innerHTML = `${turnTag} · ${who} <span class="bite-tag">▼ BIT</span> @ ${entry.x},${entry.y}${killText}`;
     } else {
-      const flipText = entry.flipped > 0
-        ? ` · <span class="flip">+${entry.flipped} flipped</span>` : "";
-      const convText = entry.converted > 0
-        ? ` · <span class="flip">+${entry.converted} absorbed</span>` : "";
+      const flipText = entry.flipped > 0 ? ` · <span class="flip">+${entry.flipped} flipped</span>` : "";
+      const convText = entry.converted > 0 ? ` · <span class="flip">+${entry.converted} absorbed</span>` : "";
       div.innerHTML = `${turnTag} · ${who} placed ${entry.piece} @ ${entry.x},${entry.y}${flipText}${convText}`;
     }
     list.appendChild(div);
@@ -1606,60 +1353,46 @@ function updateLog() {
 
 function updateGameOver() {
   const go = document.getElementById("gameOver");
-  if (!lastState.finished) {
-    go.classList.add("hidden");
-    return;
-  }
+  if (!lastState.finished) { go.classList.add("hidden"); return; }
   go.classList.remove("hidden");
   const title = document.getElementById("goTitle");
   const sub = document.getElementById("goSub");
   const reason = lastState.endReason;
+  const winner = lastState.winner;
 
-  if (lastState.winner === -1) {
+  // Multi-player win: winner can be a number, an array, or -1
+  const isWinner = (() => {
+    if (winner == null || myPlayerIdx == null) return false;
+    if (Array.isArray(winner)) return winner.includes(myPlayerIdx);
+    return winner === myPlayerIdx;
+  })();
+  const isTie = winner === -1 || (Array.isArray(winner) && winner.length > 1);
+  const eliminated = lastState.eliminated && lastState.eliminated[myPlayerIdx];
+
+  if (isTie) {
     title.textContent = reason === "mutual_pass" ? "CAT'S GAME" : "STALEMATE";
     title.style.color = "var(--text)";
-    sub.textContent = reason === "mutual_pass"
-      ? "both players passed — neither colony advances"
-      : "the colonies are deadlocked";
-  } else if (lastState.winner === myIndex) {
-    if (reason === "head_captured") {
-      title.textContent = "HEAD TAKEN";
-      title.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
-      sub.textContent = "the enemy head is consumed";
-    } else if (reason === "forfeit") {
-      title.textContent = "VICTORY";
-      title.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
-      sub.textContent = "your opponent disconnected";
-    } else if (reason === "resigned") {
-      title.textContent = "VICTORY";
-      title.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
-      sub.textContent = "your opponent resigned";
-    } else if (reason === "mutual_pass") {
-      title.textContent = "VICTORY";
-      title.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
-      sub.textContent = "passed game — your colony was stronger near its head";
-    } else {
-      title.textContent = "VICTORY";
-      title.style.color = myIndex === 0 ? "var(--p1)" : "var(--p2)";
-      sub.textContent = "your colony has dominated the substrate";
-    }
+    sub.textContent = reason === "mutual_pass" ? "all players passed" : "the colonies are deadlocked";
+  } else if (isWinner) {
+    title.textContent = "VICTORY";
+    title.style.color = colorFor(myPlayerIdx + 1);
+    if (reason === "head_captured") sub.textContent = "you stand alone";
+    else if (reason === "first_death") sub.textContent = "you survived the first elimination";
+    else if (reason === "stalemate" || reason === "mutual_pass") sub.textContent = "your colony was strongest";
+    else sub.textContent = "your colony has dominated the substrate";
   } else {
-    if (reason === "head_captured") {
-      title.textContent = "HEAD CONSUMED";
+    if (eliminated && reason !== "first_death") {
+      title.textContent = "ELIMINATED";
       title.style.color = "var(--warn)";
-      sub.textContent = "your line was flanked";
-    } else if (reason === "resigned") {
-      title.textContent = "RESIGNED";
-      title.style.color = "var(--text-dim)";
-      sub.textContent = "you withdrew from the substrate";
-    } else if (reason === "mutual_pass") {
+      sub.textContent = "your head was flanked";
+    } else if (reason === "first_death") {
       title.textContent = "DEFEAT";
       title.style.color = "var(--warn)";
-      sub.textContent = "passed game — your colony was weaker near its head";
+      sub.textContent = "your head fell first";
     } else {
-      title.textContent = "CONSUMED";
+      title.textContent = "DEFEAT";
       title.style.color = "var(--warn)";
-      sub.textContent = "your spores have been engulfed";
+      sub.textContent = "another colony prevailed";
     }
   }
 }
@@ -1668,50 +1401,36 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
-// Continuous render loop for head pulsing/breathing animation
 function tick() {
   pulseT = performance.now();
-  if (lastState && (!lastState.finished || anims.length > 0)) {
-    render();
-  }
+  if (lastState && (!lastState.finished || anims.length > 0)) render();
   pulseAnim = requestAnimationFrame(tick);
 }
-// Start animation loop only once we have state
-function startTickIfNeeded() {
-  if (pulseAnim == null) tick();
-}
+function startTickIfNeeded() { if (pulseAnim == null) tick(); }
 
 canvas.addEventListener("mousemove", (e) => {
   const rect = canvas.getBoundingClientRect();
   const x = Math.floor((e.clientX - rect.left) / CELL);
   const y = Math.floor((e.clientY - rect.top) / CELL);
-  if (x !== hover.x || y !== hover.y) {
-    hover = { x, y };
-  }
+  if (x !== hover.x || y !== hover.y) hover = { x, y };
 });
 canvas.addEventListener("mouseleave", () => { hover = { x: -1, y: -1 }; });
 canvas.addEventListener("click", () => {
   if (!lastState || lastState.finished) return;
-  if (lastState.turn !== myIndex) return;
+  if (lastState.turn !== myPlayerIdx) return;
   if (hover.x < 0) return;
   if (biteMode) {
     send({ type: "bite", x: hover.x, y: hover.y });
     biteMode = false;
   } else {
-    const piece = lastState.nextPiece[myIndex];
+    const piece = lastState.nextPiece[myPlayerIdx];
     send({ type: "move", piece, x: hover.x, y: hover.y, rotation });
   }
 });
 window.addEventListener("keydown", (e) => {
-  if (e.key === "r" || e.key === "R") {
-    rotation = (rotation + 1) % 4;
-  }
-  if (e.key === "b" || e.key === "B") {
-    document.getElementById("biteBtn").click();
-  }
-  if (e.key === "Escape" && biteMode) {
-    biteMode = false;
-  }
+  if (e.key === "r" || e.key === "R") rotation = (rotation + 1) % 4;
+  if (e.key === "b" || e.key === "B") document.getElementById("biteBtn").click();
+  if (e.key === "Escape" && biteMode) biteMode = false;
 });
 
 let touchStart = null;
@@ -1729,12 +1448,10 @@ canvas.addEventListener("touchend", (e) => {
   const x = Math.floor((touchStart.clientX - rect.left) / CELL);
   const y = Math.floor((touchStart.clientY - rect.top) / CELL);
   hover = { x, y };
-  if (lastState && !lastState.finished && lastState.turn === myIndex) {
-    if (biteMode) {
-      send({ type: "bite", x, y });
-      biteMode = false;
-    } else {
-      const piece = lastState.nextPiece[myIndex];
+  if (lastState && !lastState.finished && lastState.turn === myPlayerIdx) {
+    if (biteMode) { send({ type: "bite", x, y }); biteMode = false; }
+    else {
+      const piece = lastState.nextPiece[myPlayerIdx];
       send({ type: "move", piece, x, y, rotation });
     }
   }
