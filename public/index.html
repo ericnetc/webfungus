@@ -231,27 +231,40 @@
   .bite-pip.spent { opacity: 0.25; background: transparent; }
   .bite-pip:not(.spent) { background: currentColor; }
 
-  .piece-display {
-    margin-top: 18px; padding: 14px;
-    border: 1px dashed var(--grid-strong); text-align: center;
+  .piece-queue {
+    margin-top: 14px; padding: 12px;
+    border: 1px dashed var(--grid-strong);
   }
-  .piece-display .label {
-    font-size: 11px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px;
+  .piece-queue .queue-title {
+    font-family: "VT323", monospace; font-size: 15px;
+    color: var(--text-dim); letter-spacing: 3px; margin-bottom: 10px; text-align: center;
   }
-  .piece-display .piece-svg { width: 100%; max-width: 140px; height: 80px; margin: 0 auto; }
-  .piece-display .hint {
-    font-size: 10px; color: var(--text-dim); margin-top: 8px; line-height: 1.4;
+  .piece-queue .current-piece { text-align: center; }
+  .piece-queue .current-piece .label {
+    font-size: 10px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 6px;
   }
-  .piece-display .hint kbd {
+  .piece-queue .current-piece .piece-svg {
+    width: 100%; max-width: 130px; height: 76px; margin: 0 auto; display: block;
+  }
+  .piece-queue .hint {
+    font-size: 10px; color: var(--text-dim); margin-top: 8px; line-height: 1.4; text-align: center;
+  }
+  .piece-queue .hint kbd {
     background: var(--bg-deep); border: 1px solid var(--grid-strong);
     padding: 1px 5px; color: var(--text); font-family: inherit; font-size: 10px;
   }
-
-  .upcoming-display { margin-top: 14px; padding: 10px; border: 1px dashed var(--grid-strong); }
-  .upcoming-display .label { font-size: 10px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; text-align: center; }
-  .upcoming-row { display: flex; gap: 6px; justify-content: center; align-items: center; flex-wrap: wrap; }
-  .upcoming-row svg { width: 44px; height: 28px; background: var(--bg-deep); border: 1px solid var(--grid); padding: 2px; }
-  .upcoming-row .arrow { color: var(--text-dim); font-size: 10px; margin: 0 2px; }
+  .piece-queue .next-pieces { margin-top: 10px; }
+  .piece-queue .next-pieces .label {
+    font-size: 10px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 6px; text-align: center;
+  }
+  .next-pieces-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .next-piece-slot { text-align: center; }
+  .next-piece-slot .slot-label {
+    font-size: 9px; color: var(--text-dim); letter-spacing: 2px; margin-bottom: 3px;
+  }
+  .next-piece-slot svg {
+    width: 100%; height: 36px; background: var(--bg-deep); border: 1px solid var(--grid); display: block;
+  }
 
   .room-info {
     margin-top: 14px; padding: 8px 10px;
@@ -415,11 +428,18 @@
       <h2 class="panel-title">// colonies</h2>
       <div id="playerCards"></div>
 
-      <div class="piece-display">
-        <div class="label" id="pieceLabel">YOUR NEXT SPORE</div>
-        <svg class="piece-svg" id="pieceSvg" viewBox="0 0 140 80"></svg>
-        <div class="hint" id="pieceHint">
-          <kbd>R</kbd> rotate &nbsp;·&nbsp; <kbd>Click</kbd> place
+      <div class="piece-queue" id="pieceQueue">
+        <div class="queue-title">SPORE QUEUE</div>
+        <div class="current-piece">
+          <div class="label" id="pieceLabel">CURRENT</div>
+          <svg class="piece-svg" id="pieceSvg" viewBox="0 0 130 76"></svg>
+          <div class="hint" id="pieceHint">
+            <kbd>R</kbd> rotate &nbsp;·&nbsp; <kbd>Click</kbd> place
+          </div>
+        </div>
+        <div class="next-pieces" id="nextPiecesSection">
+          <div class="label">QUEUED</div>
+          <div class="next-pieces-row" id="nextPiecesRow"></div>
         </div>
       </div>
 
@@ -427,11 +447,6 @@
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
         <button class="act" id="passBtn" style="margin-top:0;">PASS</button>
         <button class="act danger" id="resignBtn" style="margin-top:0;">RESIGN</button>
-      </div>
-
-      <div class="upcoming-display hidden" id="upcomingDisplay">
-        <div class="label">UPCOMING</div>
-        <div class="upcoming-row" id="upcomingRow"></div>
       </div>
 
       <div class="room-info" id="gameRoomInfo"></div>
@@ -890,10 +905,20 @@ function previewPlacement(cells, playerNum, board, heads) {
   return { flipped, converted };
 }
 function previewBite(x, y, playerNum, board, heads) {
+  const radius = (lastState && lastState.biteRadius) ? (lastState.biteRadius[myPlayerIdx] || 0) : 0;
   const sim = board.map(row => row.slice());
-  sim[y][x] = 0;
+  const removed = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || nx >= boardSize || ny < 0 || ny >= boardSize) continue;
+      if (heads && heads.some(h => h && h.x === nx && h.y === ny)) continue;
+      const v = sim[ny][nx];
+      if (v > 0 && v !== playerNum) { sim[ny][nx] = 0; removed.push([nx, ny]); }
+    }
+  }
   const orphans = simOrphans(sim, heads, "die");
-  const killed = orphans.filter(o => o.owner !== playerNum).map(o => [o.x, o.y]);
+  const killed = [...removed, ...orphans.filter(o => o.owner !== playerNum).map(o => [o.x, o.y])];
   return { bitten: [x, y], killed };
 }
 
@@ -1027,6 +1052,7 @@ function render() {
     ctx.beginPath(); ctx.moveTo(0, i*CELL); ctx.lineTo(boardSize*CELL, i*CELL); ctx.stroke();
   }
   const suppressed = suppressedCellsForPlace(now);
+  drawMycelium(board, heads);
   for (let y = 0; y < boardSize; y++) {
     for (let x = 0; x < boardSize; x++) {
       const v = board[y][x];
@@ -1036,6 +1062,7 @@ function render() {
       drawCell(x, y, v);
     }
   }
+  drawCilia(board, heads);
   for (const a of anims) drawAnim(a, now);
   if (heads) {
     for (let i = 0; i < heads.length; i++) {
@@ -1079,51 +1106,155 @@ function render() {
 
 function drawCell(x, y, playerNum) {
   const px = x * CELL, py = y * CELL;
+  const cx = px + CELL / 2, cy = py + CELL / 2;
   const color = colorFor(playerNum), glow = glowFor(playerNum);
-  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.35;
+  // Each cell breathes at its own phase — undulation is per-cell, not global.
+  const phase = pulseT * 0.0022 + x * 1.73 + y * 2.53;
+  const squish = 0.10 * Math.sin(phase);
+  const tilt   = 0.18 * Math.sin(pulseT * 0.0017 + x * 2.1 + y * 1.4);
+  const rx = CELL * (0.43 + squish * 0.5);
+  const ry = CELL * (0.43 - squish * 0.5);
+  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.4;
   ctx.fillStyle = color;
-  ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, tilt, 0, Math.PI * 2);
+  ctx.fill();
   ctx.shadowBlur = 0;
-  ctx.fillStyle = glow; ctx.globalAlpha = 0.3;
-  ctx.fillRect(px + 2, py + 2, CELL - 4, Math.max(2, CELL * 0.12));
+  // Specular highlight sheen
+  ctx.fillStyle = glow; ctx.globalAlpha = 0.26;
+  ctx.beginPath();
+  ctx.ellipse(cx - rx * 0.25, cy - ry * 0.28, rx * 0.5, ry * 0.38, tilt, 0, Math.PI * 2);
+  ctx.fill();
   ctx.globalAlpha = 1;
+}
+
+function drawMycelium(board, heads) {
+  if (!board) return;
+  ctx.lineCap = "round";
+  for (let y = 0; y < boardSize; y++) {
+    for (let x = 0; x < boardSize; x++) {
+      const v = board[y][x];
+      if (v <= 0) continue;
+      if (heads && heads.some(h => h && h.x === x && h.y === y)) continue;
+      const glow = glowFor(v);
+      const cx1 = x * CELL + CELL / 2, cy1 = y * CELL + CELL / 2;
+      ctx.strokeStyle = glow;
+      ctx.lineWidth = CELL * 0.2;
+      ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.06;
+      ctx.globalAlpha = 0.42;
+      // Right neighbor
+      if (x + 1 < boardSize && board[y][x + 1] === v &&
+          !(heads && heads.some(h => h && h.x === x + 1 && h.y === y))) {
+        const cx2 = (x + 1) * CELL + CELL / 2;
+        const bend = cy1 + CELL * 0.16 * Math.sin(pulseT * 0.0028 + x * 1.9 + y * 0.7);
+        ctx.beginPath();
+        ctx.moveTo(cx1, cy1);
+        ctx.quadraticCurveTo((cx1 + cx2) / 2, bend, cx2, cy1);
+        ctx.stroke();
+      }
+      // Down neighbor
+      if (y + 1 < boardSize && board[y + 1][x] === v &&
+          !(heads && heads.some(h => h && h.x === x && h.y === y + 1))) {
+        const cy2 = (y + 1) * CELL + CELL / 2;
+        const bend = cx1 + CELL * 0.16 * Math.sin(pulseT * 0.0028 + x * 0.7 + y * 1.9);
+        ctx.beginPath();
+        ctx.moveTo(cx1, cy1);
+        ctx.quadraticCurveTo(bend, (cy1 + cy2) / 2, cx1, cy2);
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.lineCap = "butt";
+}
+
+function drawCilia(board, heads) {
+  if (!board) return;
+  ctx.lineCap = "round";
+  for (let y = 0; y < boardSize; y++) {
+    for (let x = 0; x < boardSize; x++) {
+      const v = board[y][x];
+      if (v <= 0) continue;
+      if (heads && heads.some(h => h && h.x === x && h.y === y)) continue;
+      const glow = glowFor(v);
+      const cx = x * CELL + CELL / 2, cy = y * CELL + CELL / 2;
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nx = x + dx, ny = y + dy;
+        const exposed = nx < 0 || nx >= boardSize || ny < 0 || ny >= boardSize
+          || board[ny][nx] !== v;
+        if (!exposed) continue;
+        const perpX = -dy, perpY = dx;
+        for (let s = -1; s <= 1; s += 2) {
+          const ox = cx + CELL * 0.41 * dx + CELL * 0.16 * s * perpX;
+          const oy = cy + CELL * 0.41 * dy + CELL * 0.16 * s * perpY;
+          const len = CELL * (0.12 + 0.07 * Math.sin(pulseT * 0.005 + x * 2.3 + y * 1.7 + s));
+          ctx.strokeStyle = glow; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+          ctx.beginPath();
+          ctx.moveTo(ox, oy);
+          ctx.lineTo(ox + len * dx, oy + len * dy);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.lineCap = "butt";
 }
 
 function drawHead(head, threatLevel) {
   const px = head.x * CELL, py = head.y * CELL;
   const cx = px + CELL / 2, cy = py + CELL / 2;
-  const r = CELL * 0.5;
   const color = colorFor(head.playerNum), glow = glowFor(head.playerNum);
+  const breathe = 0.82 + 0.18 * Math.sin(pulseT * 0.004 + head.x * 0.7 + head.y * 1.1);
+  const r = CELL * 0.46 * breathe;
   if (threatLevel >= 2) {
     const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
     ctx.shadowColor = getCSS("--warn-glow");
-    ctx.shadowBlur = CELL * (0.6 + pulse * 0.6);
+    ctx.shadowBlur = CELL * (0.8 + pulse * 0.9);
     ctx.fillStyle = getCSS("--warn");
-    ctx.globalAlpha = 0.3 + pulse * 0.3;
-    ctx.beginPath(); ctx.arc(cx, cy, r * 1.0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 0.18 + pulse * 0.22;
+    ctx.beginPath(); ctx.arc(cx, cy, r * 1.4, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
   }
-  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.5;
-  ctx.fillStyle = color;
-  ctx.beginPath(); ctx.arc(cx, cy, r * 0.85, 0, Math.PI * 2); ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = getCSS("--bg-deep");
-  ctx.beginPath(); ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2); ctx.fill();
-  const breath = 0.85 + 0.15 * Math.sin(pulseT * 0.005);
-  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.35;
-  ctx.fillStyle = glow;
-  ctx.beginPath(); ctx.arc(cx, cy, r * 0.22 * breath, 0, Math.PI * 2); ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = getCSS("--bg-deep");
-  ctx.fillRect(cx - r * 0.04, cy - r * 0.18, r * 0.08, r * 0.36);
-  ctx.fillStyle = color; ctx.globalAlpha = 0.7;
-  const fleckR = r * 0.08;
-  for (const [dx, dy] of [[-0.55,-0.55],[0.55,-0.55],[-0.55,0.55],[0.55,0.55]]) {
+  // Tentacles radiating outward
+  ctx.lineCap = "round";
+  const numTentacles = 8;
+  for (let i = 0; i < numTentacles; i++) {
+    const baseAngle = (i / numTentacles) * Math.PI * 2;
+    const wave = 0.12 * Math.sin(pulseT * 0.006 + i * 1.4);
+    const angle = baseAngle + wave;
+    const tLen = r * (0.5 + 0.25 * Math.sin(pulseT * 0.005 + i * 2.1));
+    ctx.strokeStyle = glow; ctx.lineWidth = CELL * 0.07;
+    ctx.globalAlpha = 0.55; ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.15;
     ctx.beginPath();
-    ctx.arc(cx + r * dx, cy + r * dy, fleckR, 0, Math.PI * 2);
+    ctx.moveTo(cx + r * 0.85 * Math.cos(angle), cy + r * 0.85 * Math.sin(angle));
+    ctx.lineTo(cx + (r + tLen) * Math.cos(angle), cy + (r + tLen) * Math.sin(angle));
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  // Main body
+  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.65;
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  // Inner eye socket
+  ctx.fillStyle = getCSS("--bg-deep");
+  ctx.beginPath(); ctx.arc(cx, cy, r * 0.52, 0, Math.PI * 2); ctx.fill();
+  // Pupil glow
+  const pupilBreath = 0.82 + 0.18 * Math.sin(pulseT * 0.0055 + 1.2);
+  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.45;
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(cx, cy, r * 0.24 * pupilBreath, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  // Slit pupil
+  ctx.fillStyle = getCSS("--bg-deep");
+  ctx.fillRect(cx - r * 0.045, cy - r * 0.22, r * 0.09, r * 0.44);
+  // Corner spore flecks
+  ctx.fillStyle = color; ctx.globalAlpha = 0.65;
+  for (const [dx, dy] of [[-0.62,-0.62],[0.62,-0.62],[-0.62,0.62],[0.62,0.62]]) {
+    ctx.beginPath();
+    ctx.arc(cx + r * dx, cy + r * dy, r * 0.10, 0, Math.PI * 2);
     ctx.fill();
   }
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = 1; ctx.lineCap = "butt";
 }
 
 function drawCellGhost(x, y, color) {
@@ -1139,25 +1270,36 @@ function drawBitePreview(x, y) {
   if (!lastState) return;
   if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return;
   const valid = checkValidBite(x, y, myPlayerIdx + 1, lastState.board, lastState.heads);
+  const radius = (lastState.biteRadius || [])[myPlayerIdx] || 0;
+  const ax = (x - radius) * CELL, ay = (y - radius) * CELL;
+  const aw = (1 + 2 * radius) * CELL, ah = (1 + 2 * radius) * CELL;
   const px = x * CELL, py = y * CELL;
   if (valid) {
     const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
-    ctx.fillStyle = getCSS("--warn");
-    ctx.globalAlpha = 0.4 + pulse * 0.3;
+    // Area background tint
+    ctx.fillStyle = getCSS("--warn"); ctx.globalAlpha = 0.10 + pulse * 0.07;
+    ctx.fillRect(ax, ay, aw, ah);
+    // Center cell highlight
+    ctx.globalAlpha = 0.35 + pulse * 0.2;
     ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
-    ctx.shadowColor = getCSS("--warn-glow");
-    ctx.shadowBlur = CELL * 0.4;
-    ctx.strokeStyle = getCSS("--warn-glow");
-    ctx.lineWidth = 3; ctx.globalAlpha = 1;
+    // Area border (dashed)
+    ctx.shadowColor = getCSS("--warn-glow"); ctx.shadowBlur = CELL * 0.25;
+    ctx.strokeStyle = getCSS("--warn");
+    ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.globalAlpha = 0.7 + pulse * 0.25;
+    ctx.strokeRect(ax + 1, ay + 1, aw - 2, ah - 2);
+    ctx.setLineDash([]);
+    // X on center
+    ctx.strokeStyle = getCSS("--warn-glow"); ctx.lineWidth = 3; ctx.globalAlpha = 1;
     ctx.beginPath();
     ctx.moveTo(px + 6, py + 6); ctx.lineTo(px + CELL - 6, py + CELL - 6);
     ctx.moveTo(px + CELL - 6, py + 6); ctx.lineTo(px + 6, py + CELL - 6);
     ctx.stroke(); ctx.shadowBlur = 0; ctx.globalAlpha = 1;
   } else {
     ctx.strokeStyle = getCSS("--text-dim");
-    ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
-    ctx.strokeRect(px + 4, py + 4, CELL - 8, CELL - 8);
-    ctx.globalAlpha = 1;
+    ctx.lineWidth = 1; ctx.globalAlpha = 0.4;
+    ctx.setLineDash([3, 3]);
+    ctx.strokeRect(ax + 2, ay + 2, aw - 4, ah - 4);
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
   }
 }
 function drawCaptureOutline(x, y, color, kind) {
@@ -1220,7 +1362,8 @@ function updateSidebar() {
     const threatTag = (lastState.threats && lastState.threats[playerIdx] >= 2 && !lastState.finished && !(lastState.eliminated && lastState.eliminated[playerIdx]))
       ? " <span class='threat-tag'>HEAD AT RISK</span>" : "";
     const pips = (lastState.bitesRemaining || [])[playerIdx] || 0;
-    const bitePips = Array.from({length: 3}, (_, k) =>
+    const maxPips = Math.max(pips, 3);
+    const bitePips = Array.from({length: maxPips}, (_, k) =>
       `<span class="bite-pip${k < pips ? '' : ' spent'}"></span>`
     ).join("");
     card.innerHTML =
@@ -1230,50 +1373,59 @@ function updateSidebar() {
     cards.appendChild(card);
   }
 
-  // Piece preview
+  // Piece queue: current piece + next pieces from upcoming bag
   const svg = document.getElementById("pieceSvg");
   const pieceLabel = document.getElementById("pieceLabel");
   const pieceHint = document.getElementById("pieceHint");
   const myPiece = lastState.nextPiece[myPlayerIdx];
+  const color = colorFor(myPlayerIdx + 1);
+
   if (biteMode) {
     pieceLabel.textContent = "BITE MODE";
     pieceLabel.style.color = "var(--warn)";
+    const biteRadius = (lastState.biteRadius || [])[myPlayerIdx] || 0;
+    const areaLabel = biteRadius === 0 ? "1×1" : biteRadius === 1 ? "3×3" : "5×5";
+    const hw = 12 + biteRadius * 12, hh = 12 + biteRadius * 12;
     svg.innerHTML = `
-      <g transform="translate(70, 40)">
-        <rect x="-14" y="-14" width="28" height="28" fill="none" stroke="var(--warn)" stroke-width="2"/>
-        <line x1="-10" y1="-10" x2="10" y2="10" stroke="var(--warn)" stroke-width="2"/>
-        <line x1="10" y1="-10" x2="-10" y2="10" stroke="var(--warn)" stroke-width="2"/>
+      <g transform="translate(65, 38)">
+        <rect x="${-hw}" y="${-hh}" width="${hw*2}" height="${hh*2}" fill="rgba(232,90,58,0.12)" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <rect x="-9" y="-9" width="18" height="18" fill="none" stroke="var(--warn)" stroke-width="2"/>
+        <line x1="-6" y1="-6" x2="6" y2="6" stroke="var(--warn)" stroke-width="2"/>
+        <line x1="6" y1="-6" x2="-6" y2="6" stroke="var(--warn)" stroke-width="2"/>
+        <text x="0" y="${hh + 11}" text-anchor="middle" fill="var(--warn)" font-size="9" letter-spacing="2">${areaLabel} AREA</text>
       </g>`;
-    pieceHint.innerHTML = "Click an enemy cell touching your colony.<br/>Disconnected enemy cells will die.<br/>Click <kbd>BITE</kbd> again to cancel.";
+    pieceHint.innerHTML = `Click enemy cell adjacent to your colony.<br/>Destroys all enemies in ${areaLabel} area.<br/>Orphaned enemies die. <kbd>ESC</kbd> cancel.`;
   } else if (myPiece) {
-    pieceLabel.textContent = "YOUR NEXT SPORE";
+    pieceLabel.textContent = "CURRENT";
     pieceLabel.style.color = "var(--text-dim)";
     const shape = rotate(SHAPES[myPiece], rotation);
-    const w = Math.max(...shape.map(([x])=>x)) + 1;
-    const h = Math.max(...shape.map(([,y])=>y)) + 1;
-    const size = Math.min(140 / w, 80 / h);
-    const ox = (140 - w * size) / 2;
-    const oy = (80 - h * size) / 2;
-    const color = colorFor(myPlayerIdx + 1);
+    const sw = Math.max(...shape.map(([x])=>x)) + 1;
+    const sh = Math.max(...shape.map(([,y])=>y)) + 1;
+    const size = Math.min(130 / sw, 76 / sh);
+    const ox = (130 - sw * size) / 2;
+    const oy = (76 - sh * size) / 2;
     svg.innerHTML = shape.map(([x, y]) =>
-      `<rect x="${ox + x*size + 2}" y="${oy + y*size + 2}" width="${size-4}" height="${size-4}" fill="${color}" opacity="0.9"/>`
+      `<rect x="${ox + x*size + 2}" y="${oy + y*size + 2}" width="${size-4}" height="${size-4}" fill="${color}" rx="2" opacity="0.9"/>`
     ).join("");
     pieceHint.innerHTML = "<kbd>R</kbd> rotate &nbsp;·&nbsp; <kbd>Click</kbd> place";
   }
 
-  // Upcoming
-  const upDisplay = document.getElementById("upcomingDisplay");
-  const upRow = document.getElementById("upcomingRow");
-  if (lastState.upcoming && lastState.upcoming.length > 0) {
-    upDisplay.classList.remove("hidden");
-    const color = colorFor(myPlayerIdx + 1);
-    const items = lastState.upcoming.map((p, i) =>
-      `<svg viewBox="0 0 44 28">${pieceSvg(p, 44, 28, color)}</svg>` +
-      (i < lastState.upcoming.length - 1 ? '<span class="arrow">›</span>' : '')
-    );
-    upRow.innerHTML = items.join("");
+  // Queued next pieces
+  const nextSection = document.getElementById("nextPiecesSection");
+  const nextRow = document.getElementById("nextPiecesRow");
+  const upcoming = lastState.upcoming || [];
+  if (upcoming.length > 0 && myPlayerIdx != null && !biteMode) {
+    nextSection.style.display = "block";
+    const slots = upcoming.slice(0, 3).map((p, i) => {
+      const ordinal = ["NEXT", "2ND", "3RD"][i] || `${i+2}`;
+      return `<div class="next-piece-slot">
+        <div class="slot-label">${ordinal}</div>
+        <svg viewBox="0 0 44 36">${pieceSvg(p, 44, 36, color)}</svg>
+      </div>`;
+    });
+    nextRow.innerHTML = slots.join("");
   } else {
-    upDisplay.classList.add("hidden");
+    nextSection.style.display = upcoming.length > 0 ? "block" : "none";
   }
 
   const status = document.getElementById("boardStatus");

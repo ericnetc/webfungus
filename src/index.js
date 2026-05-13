@@ -326,6 +326,12 @@ function computeStartingBites(size) {
   // 8→3, 10→3, 12→3, 16→3, 20→4, 24→5
 }
 
+// Bite area radius scales with colony size.
+// 0–24 cells = radius 0 (1×1), 25–49 = radius 1 (3×3), 50+ = radius 2 (5×5).
+function computeBiteRadius(cellCount) {
+  return Math.min(2, Math.floor(cellCount / 25));
+}
+
 // Award extra bites capped at BITE_MAX.
 function awardBiteBonus(game, playerIdx, amount) {
   game.bitesRemaining[playerIdx] = Math.min(
@@ -502,20 +508,25 @@ function simulatePlacement(board, heads, size, playerNum, cells) {
   return { flipped, orphans, myGain, enemyLoss };
 }
 
-// Returns { orphans, enemyLoss, cascadeSize }
-// cascadeSize = orphan kills beyond the directly bitten cell.
-function simulateBite(board, heads, size, playerNum, x, y) {
-  board[y][x] = 0;
-  const orphans = processOrphans(board, heads, size, "die");
-  let enemyLoss = 1;
-  let cascadeSize = 0;
-  for (const p in orphans) {
-    if (parseInt(p, 10) !== playerNum) {
-      enemyLoss += orphans[p].length;
-      cascadeSize += orphans[p].length;
+// Returns { orphans, enemyLoss, cascadeSize, directKills }
+// radius: 0 = 1×1, 1 = 3×3, 2 = 5×5 area bite.
+function simulateBite(board, heads, size, playerNum, x, y, radius = 0) {
+  let directKills = 0;
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (!inBounds(nx, ny, size)) continue;
+      if (isHeadAt(heads, nx, ny)) continue;
+      const v = board[ny][nx];
+      if (v > 0 && v !== playerNum) { board[ny][nx] = 0; directKills++; }
     }
   }
-  return { orphans, enemyLoss, cascadeSize };
+  const orphans = processOrphans(board, heads, size, "die");
+  let cascadeSize = 0;
+  for (const p in orphans) {
+    if (parseInt(p, 10) !== playerNum) cascadeSize += orphans[p].length;
+  }
+  return { orphans, enemyLoss: directKills + cascadeSize, cascadeSize, directKills };
 }
 
 // Easy bot: random legal placement, with a ~30% chance to use a strategic bite
@@ -524,16 +535,17 @@ function simulateBite(board, heads, size, playerNum, x, y) {
 function pickEasyMove(game, playerIdx) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
+  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size));
 
   if (game.bitesRemaining[playerIdx] > 0 && Math.random() < 0.30) {
     const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum)];
     if (bites.length > 0) {
-      // Prefer bites that cascade into orphan kills.
+      // Prefer bites that cascade into orphan kills or cover a large area.
       const cascadeBites = bites.filter(b => {
         const bd = cloneBoard(game.board);
         const hd = cloneHeads(game.heads);
-        const sim = simulateBite(bd, hd, game.size, playerNum, b.x, b.y);
-        return sim.cascadeSize >= 1;
+        const sim = simulateBite(bd, hd, game.size, playerNum, b.x, b.y, biteRadius);
+        return sim.cascadeSize >= 1 || sim.directKills >= 2;
       });
       const pool = cascadeBites.length > 0 ? cascadeBites : bites;
       const choice = pool[Math.floor(Math.random() * pool.length)];
@@ -558,6 +570,7 @@ function pickEasyMove(game, playerIdx) {
 function pickModerateMove(game, playerIdx) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
+  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size));
   let best = null;
   const consider = (action, score) => {
     if (best === null || score > best.score) best = { score, action };
@@ -586,9 +599,9 @@ function pickModerateMove(game, playerIdx) {
     for (const b of bites) {
       const bd = cloneBoard(game.board);
       const hd = cloneHeads(game.heads);
-      const sim = simulateBite(bd, hd, game.size, playerNum, b.x, b.y);
-      // Direct removal = 1.5, each orphan cascade kill = 3.0 (high value: they die, not flip)
-      const score = 1.5 + sim.cascadeSize * 3.0 - biteCost;
+      const sim = simulateBite(bd, hd, game.size, playerNum, b.x, b.y, biteRadius);
+      // Direct area kills = 1.5 each, cascade orphan kills = 3.0 (die permanently)
+      const score = sim.directKills * 1.5 + sim.cascadeSize * 3.0 - biteCost;
       consider({ type: "bite", x: b.x, y: b.y }, score);
     }
   }
@@ -603,6 +616,7 @@ function pickModerateMove(game, playerIdx) {
 function pickHardMove(game, playerIdx) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
+  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size));
   const TOP_K = 8;
   const TOP_K_OPP = 4;
 
@@ -652,9 +666,9 @@ function pickHardMove(game, playerIdx) {
     for (const b of bites) {
       const bd = cloneBoard(game.board);
       const hd = cloneHeads(game.heads);
-      const simResult = simulateBite(bd, hd, game.size, playerNum, b.x, b.y);
-      // Penalty shrinks as cascade grows: big cuts are genuinely strong moves.
-      const bitePenalty = Math.max(0, 2 - simResult.cascadeSize);
+      const simResult = simulateBite(bd, hd, game.size, playerNum, b.x, b.y, biteRadius);
+      // Penalty shrinks as total kills grow: large area bites and cascade cuts are strong moves.
+      const bitePenalty = Math.max(0, 2 - simResult.cascadeSize - simResult.directKills * 0.4);
       const greedyScore = evaluateBoard(bd, hd, game.size, playerNum) - bitePenalty;
       candidates.push({
         action: { type: "bite", x: b.x, y: b.y },
@@ -827,6 +841,11 @@ export class Room extends DurableObject {
       turnSlot: this.playerIdxToSlot(this.game.turn),
       nextPiece: this.game.nextPiece,
       bitesRemaining: this.game.bitesRemaining,
+      biteRadius: this.game.heads.map((h, i) =>
+        (h && !this.game.eliminated[i])
+          ? computeBiteRadius(countCells(this.game.board, h.playerNum, this.game.size))
+          : 0
+      ),
       eliminated: this.game.eliminated,
       upcoming: myUpcoming,
       yourIndex: perspectiveSlotIdx,
@@ -1180,13 +1199,11 @@ export class Room extends DurableObject {
       if (parseInt(p, 10) !== playerNum) allConverted.push(...orphans[p]);
     }
 
-    // Award a bonus bite for a big capture/convert combo.
+    // Proportional bite earning: 1 per 8 cells captured/converted.
     const totalCaptured = flipped.length + allConverted.length;
-    let bitesBonusEarned = 0;
-    if (totalCaptured >= BITE_CAPTURE_BONUS_THRESHOLD) {
-      awardBiteBonus(g, playerIdx, 1);
-      bitesBonusEarned++;
-    }
+    const bitesBonusFromCapture = Math.floor(totalCaptured / 8);
+    let bitesBonusEarned = bitesBonusFromCapture;
+    if (bitesBonusFromCapture > 0) awardBiteBonus(g, playerIdx, bitesBonusFromCapture);
     // Check colony-size milestones.
     bitesBonusEarned += checkBiteMilestones(g, playerIdx);
 
@@ -1223,20 +1240,35 @@ export class Room extends DurableObject {
     const v = validateBite(g.board, msg.x, msg.y, playerNum, g.size, heads);
     if (!v.ok) return { error: v.reason };
 
-    g.board[msg.y][msg.x] = 0;
+    // Bite area scales with colony size.
+    const cellCount = countCells(g.board, playerNum, g.size);
+    const radius = computeBiteRadius(cellCount);
     g.bitesRemaining[playerIdx]--;
-    const orphans = processOrphans(g.board, heads, g.size, "die");
-    const killedAll = [];
-    for (const p in orphans) {
-      if (parseInt(p, 10) !== playerNum) killedAll.push(...orphans[p]);
-    }
 
-    // Award a bonus bite for a large cascade kill.
-    let bitesBonusEarned = 0;
-    if (killedAll.length >= BITE_CASCADE_THRESHOLD) {
-      awardBiteBonus(g, playerIdx, 1);
-      bitesBonusEarned++;
+    // Remove all enemy cells in the bite area.
+    const removedCells = [];
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const nx = msg.x + dx, ny = msg.y + dy;
+        if (!inBounds(nx, ny, g.size)) continue;
+        if (isHeadAt(heads, nx, ny)) continue;
+        const cv = g.board[ny][nx];
+        if (cv > 0 && cv !== playerNum) {
+          g.board[ny][nx] = 0;
+          removedCells.push([nx, ny]);
+        }
+      }
     }
+    const orphans = processOrphans(g.board, heads, g.size, "die");
+    const cascadeKilled = [];
+    for (const p in orphans) {
+      if (parseInt(p, 10) !== playerNum) cascadeKilled.push(...orphans[p]);
+    }
+    const killedAll = [...removedCells, ...cascadeKilled];
+
+    // Proportional bite earning: 1 per 5 cascaded orphan kills.
+    let bitesBonusEarned = Math.floor(cascadeKilled.length / 5);
+    if (bitesBonusEarned > 0) awardBiteBonus(g, playerIdx, bitesBonusEarned);
     bitesBonusEarned += checkBiteMilestones(g, playerIdx);
 
     g.consecutivePasses = 0;
