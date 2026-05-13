@@ -22,7 +22,12 @@ import { DurableObject } from "cloudflare:workers";
 // --- Configuration ranges ---
 const MIN_BOARD = 8, MAX_BOARD = 24, DEFAULT_BOARD = 20;
 const MIN_OFFSET = 1, MAX_OFFSET = 8, DEFAULT_OFFSET = 6;
-const STARTING_BITES = 3;
+const STARTING_BITES = 3;        // base starting bites (scaled by board size at game start)
+const BITE_MAX = 6;              // hard cap on bites per player at any time
+const BITE_CAPTURE_BONUS_THRESHOLD = 5;  // capture+convert >= this many cells in one move = +1 bite
+const BITE_CASCADE_THRESHOLD = 3;        // orphan kills from a single bite >= this = +1 bite
+const BITE_ELIM_BONUS = 2;               // eliminating a player awards this many bites to the captor
+const BITE_MILESTONE_DIVISOR = 1.5;      // cells per milestone = floor(size * divisor); each milestone = +1 bite
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
 const VALID_LOOKAHEAD = [0, 1, 3, 5];
@@ -87,8 +92,6 @@ function headAt(heads, x, y) {
 }
 
 // --- Placement validation ---
-// In N-player, "your colony" is just your own cells. Touching another player's
-// cells doesn't count.
 function validatePlacement(board, cells, playerNum, size, heads) {
   for (const [x, y] of cells) {
     if (!inBounds(x, y, size)) return { ok: false, reason: "out of bounds" };
@@ -109,8 +112,7 @@ function validatePlacement(board, cells, playerNum, size, heads) {
   return { ok: true };
 }
 
-// Bite: an enemy cell (any non-self, non-empty, non-neutral player cell)
-// that's 4-adjacent to one of mine.
+// Bite: an enemy cell adjacent to one of mine.
 function validateBite(board, x, y, playerNum, size, heads) {
   if (!inBounds(x, y, size)) return { ok: false, reason: "out of bounds" };
   if (isHeadAt(heads, x, y)) return { ok: false, reason: "cannot bite a head" };
@@ -128,15 +130,8 @@ function validateBite(board, x, y, playerNum, size, heads) {
 }
 
 // --- Othello-style 8-direction capture ---
-// For every cell of mine (or my head), shoot rays in all 8 directions. While
-// the ray passes through cells that are "enemy" (any non-mine, non-neutral,
-// non-empty cell, AND not a head), accumulate them. If the ray ends at a cell
-// of mine (or my head), all accumulated cells flip to me.
-//
-// Heads (any color) end a ray:
-//   - my head ends as a friendly bracket (flips the line)
-//   - enemy head ends without bracket (no flip)
-// Neutral cells (-1) and empty cells end without bracket.
+// Both bracket ends must be the SAME player (the mover). This is already
+// guaranteed because we only shoot rays from MY cells and terminate at MY cells.
 function captureFlanked(board, playerNum, size, heads) {
   const isMine = (x, y) => {
     if (!inBounds(x, y, size)) return false;
@@ -148,7 +143,7 @@ function captureFlanked(board, playerNum, size, heads) {
     if (!inBounds(x, y, size)) return false;
     if (isHeadAt(heads, x, y)) return false;
     const v = board[y][x];
-    return v > 0 && v !== playerNum; // enemy player color
+    return v > 0 && v !== playerNum;
   };
   const DIRS = [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,1],[1,-1],[-1,1]];
   const allFlipped = [];
@@ -181,9 +176,6 @@ function captureFlanked(board, playerNum, size, heads) {
 }
 
 // --- Connectivity / orphan rule ---
-// Each player's cells must trace a 4-adjacent path of same-color cells to
-// their head. If a head is gone (player eliminated), all their cells are
-// already handled by the elimination logic — we skip them here.
 function reachableFromHead(board, head, size) {
   const reached = new Set([`${head.x},${head.y}`]);
   const stack = [[head.x, head.y]];
@@ -202,12 +194,8 @@ function reachableFromHead(board, head, size) {
   return reached;
 }
 
-// orphanFate: "die" (cells become empty) or "convert" (cells go to specified player)
-// For convert mode, `convertTo` says which playerNum the orphans of each color go to.
-// In placement-driven captures, convertTo[ofColor] = the mover's color.
-// In bite-driven, all orphans die regardless.
 function processOrphans(board, heads, size, fate, convertTo) {
-  const result = {}; // { [playerNum]: [[x,y]...] }
+  const result = {};
   for (const head of heads) {
     if (!head) continue;
     const p = head.playerNum;
@@ -232,36 +220,43 @@ function processOrphans(board, heads, size, fate, convertTo) {
   return result;
 }
 
-// Head capture rule: the contiguous line of my color (including the head) along
-// any of 4 axes is bracketed by enemy on both ends. Enemy = any other player.
+// Head capture rule: the head's contiguous own-color line along any axis is
+// bracketed on BOTH ends by the SAME enemy player. Two different enemies on
+// opposite sides do NOT trigger a capture — only one player can take a head.
 function isHeadCaptured(board, head, size) {
   const own = head.playerNum;
   const isOwn = (x, y) => inBounds(x, y, size) && board[y][x] === own;
-  const isEnemy = (x, y) => {
-    if (!inBounds(x, y, size)) return false;
+  // Returns the playerNum of the enemy at this cell, or 0 if not an enemy.
+  const enemyAt = (x, y) => {
+    if (!inBounds(x, y, size)) return 0;
     const v = board[y][x];
-    return v > 0 && v !== own;
+    return (v > 0 && v !== own) ? v : 0;
   };
   const AXES = [[1,0],[0,1],[1,1],[1,-1]];
   for (const [dx, dy] of AXES) {
     let fx = head.x + dx, fy = head.y + dy;
     while (isOwn(fx, fy)) { fx += dx; fy += dy; }
-    const f = isEnemy(fx, fy);
+    const f = enemyAt(fx, fy);
     let bx = head.x - dx, by = head.y - dy;
     while (isOwn(bx, by)) { bx -= dx; by -= dy; }
-    const b = isEnemy(bx, by);
-    if (f && b) return true;
+    const b = enemyAt(bx, by);
+    // Both ends must be the same enemy to constitute a capture.
+    if (f !== 0 && f === b) return true;
   }
   return false;
 }
 
+// Threat level: how exposed the head is.
+//   3 = fully captured (same enemy brackets both ends of at least one axis)
+//   1-2 = number of axes where any enemy is closing in (even different enemies)
+//   0 = no threat
 function headThreatLevel(board, head, size) {
   const own = head.playerNum;
   const isOwn = (x, y) => inBounds(x, y, size) && board[y][x] === own;
-  const isEnemy = (x, y) => {
-    if (!inBounds(x, y, size)) return false;
+  const enemyAt = (x, y) => {
+    if (!inBounds(x, y, size)) return 0;
     const v = board[y][x];
-    return v > 0 && v !== own;
+    return (v > 0 && v !== own) ? v : 0;
   };
   const AXES = [[1,0],[0,1],[1,1],[1,-1]];
   let threatened = 0;
@@ -269,18 +264,18 @@ function headThreatLevel(board, head, size) {
   for (const [dx, dy] of AXES) {
     let fx = head.x + dx, fy = head.y + dy;
     while (isOwn(fx, fy)) { fx += dx; fy += dy; }
-    const f = isEnemy(fx, fy);
+    const f = enemyAt(fx, fy);
     let bx = head.x - dx, by = head.y - dy;
     while (isOwn(bx, by)) { bx -= dx; by -= dy; }
-    const b = isEnemy(bx, by);
-    if (f && b) captured = true;
-    if (f || b) threatened++;
+    const b = enemyAt(bx, by);
+    if (f !== 0 && f === b) captured = true;  // same enemy = actually captured
+    if (f !== 0 || b !== 0) threatened++;     // any enemy on either end = partial threat
   }
   if (captured) return 3;
   return threatened;
 }
 
-// --- Move legality, used for skip detection and bot move generation ---
+// --- Move legality ---
 function hasLegalPlacement(board, size, heads, playerNum, pieceType) {
   if (!pieceType) return false;
   const baseShape = SHAPES[pieceType];
@@ -325,11 +320,38 @@ function countCellsNearHead(board, head, size) {
   return n;
 }
 
+// Bites scale with board size. Larger boards = more starting bites.
+function computeStartingBites(size) {
+  return Math.max(STARTING_BITES, Math.round(size / 5));
+  // 8→3, 10→3, 12→3, 16→3, 20→4, 24→5
+}
+
+// Award extra bites capped at BITE_MAX.
+function awardBiteBonus(game, playerIdx, amount) {
+  game.bitesRemaining[playerIdx] = Math.min(
+    BITE_MAX,
+    game.bitesRemaining[playerIdx] + amount
+  );
+}
+
+// Check if a player has crossed a new colony-size milestone and award bites.
+// milestoneSize = floor(boardSize * BITE_MILESTONE_DIVISOR); each threshold = +1 bite.
+function checkBiteMilestones(game, playerIdx) {
+  const playerNum = playerIdx + 1;
+  const milestoneSize = Math.max(8, Math.floor(game.size * BITE_MILESTONE_DIVISOR));
+  const cells = countCells(game.board, playerNum, game.size);
+  const newMilestone = Math.floor(cells / milestoneSize);
+  const prev = game.bitesMilestone[playerIdx];
+  if (newMilestone > prev) {
+    const earned = newMilestone - prev;
+    game.bitesMilestone[playerIdx] = newMilestone;
+    awardBiteBonus(game, playerIdx, earned);
+    return earned;
+  }
+  return 0;
+}
+
 // --- Head start positions ---
-// 2 players: opposite corners (NW, SE)
-// 3 players: triangle (NW, NE, S)
-// 4 players: four corners (NW, NE, SE, SW)
-// All positions inset from corner by `offset`.
 function startingHeadPositions(size, offset, playerCount) {
   const lo = offset;
   const hi = size - 1 - offset;
@@ -346,7 +368,6 @@ function startingHeadPositions(size, offset, playerCount) {
       { x: Math.floor(size / 2), y: hi, playerNum: 3 },
     ];
   }
-  // 4 players
   return [
     { x: lo, y: lo, playerNum: 1 },
     { x: hi, y: lo, playerNum: 2 },
@@ -357,13 +378,13 @@ function startingHeadPositions(size, offset, playerCount) {
 
 function newGame(settings, slots) {
   const { size, offset } = settings;
-  // Active player count = number of non-"empty" slots
   const playerCount = slots.filter(s => s.type !== "empty").length;
   const heads = startingHeadPositions(size, offset, playerCount);
   const board = Array.from({ length: size }, () => Array(size).fill(0));
   for (const h of heads) {
     board[h.y][h.x] = h.playerNum;
   }
+  const startBites = computeStartingBites(size);
   return {
     size, offset, board,
     heads,
@@ -371,12 +392,13 @@ function newGame(settings, slots) {
     turn: 0,
     bags: heads.map(() => topUpBag([], 12)),
     nextPiece: heads.map(() => null),
-    bitesRemaining: heads.map(() => STARTING_BITES),
+    bitesRemaining: heads.map(() => startBites),
+    bitesMilestone: heads.map(() => 0),  // highest colony-size milestone reached per player
     eliminated: heads.map(() => false),
     consecutivePasses: 0,
     lastEvents: null,
     moveLog: [],
-    winner: null,           // playerIdx, or array of playerIdx for tie, or null
+    winner: null,
     finished: false,
     endReason: null,
   };
@@ -406,7 +428,6 @@ function validateSettings(raw) {
 }
 
 function defaultSlots() {
-  // Slot 0 (host) = human, slot 1 = human (open), slots 2-3 = empty
   return [
     { type: "human", name: null, occupied: false },
     { type: "human", name: null, occupied: false },
@@ -423,12 +444,10 @@ function validateSlots(rawSlots) {
     const type = SLOT_TYPES.includes(s && s.type) ? s.type : "empty";
     return { type, name: null, occupied: false };
   });
-  // Slot 0 must always be human (the host's slot)
   slots[0].type = "human";
-  // At least 2 active players
   const active = slots.filter(s => s.type !== "empty").length;
   if (active < MIN_PLAYERS) {
-    slots[1].type = "human"; // ensure at least 2
+    slots[1].type = "human";
   }
   return slots;
 }
@@ -437,7 +456,6 @@ function validateSlots(rawSlots) {
 // Bot move generation
 // ============================================================
 
-// Generate every legal placement: list of { x, y, rotation, piece, cells }
 function* enumeratePlacements(board, size, heads, playerNum, pieceType) {
   if (!pieceType) return;
   const baseShape = SHAPES[pieceType];
@@ -464,15 +482,12 @@ function* enumerateBites(board, size, heads, playerNum) {
   }
 }
 
-// Clone game state cheaply for bot simulation
 function cloneBoard(board) { return board.map(r => r.slice()); }
 function cloneHeads(heads) { return heads.map(h => h ? { ...h } : null); }
 
-// Simulate a placement and return resulting state delta (board mutated, return events)
-function simulatePlacement(board, heads, size, playerNum, cells, settings) {
+function simulatePlacement(board, heads, size, playerNum, cells) {
   for (const [x, y] of cells) board[y][x] = playerNum;
   const flipped = captureFlanked(board, playerNum, size, heads);
-  // Build convertTo: for placements, all orphans go to mover's color
   const convertTo = {};
   for (const h of heads) if (h) convertTo[h.playerNum] = playerNum;
   const orphans = processOrphans(board, heads, size, "convert", convertTo);
@@ -487,21 +502,45 @@ function simulatePlacement(board, heads, size, playerNum, cells, settings) {
   return { flipped, orphans, myGain, enemyLoss };
 }
 
+// Returns { orphans, enemyLoss, cascadeSize }
+// cascadeSize = orphan kills beyond the directly bitten cell.
 function simulateBite(board, heads, size, playerNum, x, y) {
   board[y][x] = 0;
   const orphans = processOrphans(board, heads, size, "die");
   let enemyLoss = 1;
+  let cascadeSize = 0;
   for (const p in orphans) {
-    if (parseInt(p, 10) !== playerNum) enemyLoss += orphans[p].length;
+    if (parseInt(p, 10) !== playerNum) {
+      enemyLoss += orphans[p].length;
+      cascadeSize += orphans[p].length;
+    }
   }
-  return { orphans, enemyLoss };
+  return { orphans, enemyLoss, cascadeSize };
 }
 
-// Easy bot: pick a random legal placement.
-// (Doesn't bite.)
+// Easy bot: random legal placement, with a ~30% chance to use a strategic bite
+// if it would trigger an orphan cascade (killing extra enemy cells). This gives
+// even the easy bot a basic sense that biting matters.
 function pickEasyMove(game, playerIdx) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
+
+  if (game.bitesRemaining[playerIdx] > 0 && Math.random() < 0.30) {
+    const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum)];
+    if (bites.length > 0) {
+      // Prefer bites that cascade into orphan kills.
+      const cascadeBites = bites.filter(b => {
+        const bd = cloneBoard(game.board);
+        const hd = cloneHeads(game.heads);
+        const sim = simulateBite(bd, hd, game.size, playerNum, b.x, b.y);
+        return sim.cascadeSize >= 1;
+      });
+      const pool = cascadeBites.length > 0 ? cascadeBites : bites;
+      const choice = pool[Math.floor(Math.random() * pool.length)];
+      return { type: "bite", x: choice.x, y: choice.y };
+    }
+  }
+
   const placements = [...enumeratePlacements(
     game.board, game.size, game.heads, playerNum, piece
   )];
@@ -511,13 +550,15 @@ function pickEasyMove(game, playerIdx) {
 }
 
 // Moderate bot: greedy one-ply.
-//   - Evaluate every placement by simulated capture+orphan delta.
-//   - If a bite would gain more, use it.
-//   - Pick highest myGain. Tiebreak by lowest threat to my own head.
+// Bites are scored with strong weight on cascade kills so the bot actively
+// looks for cuts that disconnect enemy colonies. Direct bite value is 1.5,
+// each cascaded orphan kill is worth 3.0 (removing them permanently is
+// much better than just flipping a cell), minus a small token-spending cost
+// that scales up when the bot is running low.
 function pickModerateMove(game, playerIdx) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
-  let best = null; // { score, action }
+  let best = null;
   const consider = (action, score) => {
     if (best === null || score > best.score) best = { score, action };
   };
@@ -528,8 +569,7 @@ function pickModerateMove(game, playerIdx) {
   for (const p of placements) {
     const b = cloneBoard(game.board);
     const h = cloneHeads(game.heads);
-    const sim = simulatePlacement(b, h, game.size, playerNum, p.cells, null);
-    // Check: does this expose me to head capture?
+    const sim = simulatePlacement(b, h, game.size, playerNum, p.cells);
     const myHead = h.find(x => x && x.playerNum === playerNum);
     if (myHead && isHeadCaptured(b, myHead, game.size)) continue; // suicidal
     const score = sim.myGain * 1.5 + sim.enemyLoss;
@@ -538,28 +578,28 @@ function pickModerateMove(game, playerIdx) {
       score
     );
   }
-  // Try bites if we have any — only if a placement isn't already great
+
   if (game.bitesRemaining[playerIdx] > 0) {
+    // Cost rises when bites are scarce.
+    const biteCost = game.bitesRemaining[playerIdx] <= 1 ? 2.5 : 0.8;
     const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum)];
     for (const b of bites) {
       const bd = cloneBoard(game.board);
       const hd = cloneHeads(game.heads);
       const sim = simulateBite(bd, hd, game.size, playerNum, b.x, b.y);
-      // Bites are valuable: count enemyLoss heavily but penalize spending
-      const score = sim.enemyLoss * 1.2 - 1.5; // -1.5 = cost of spending a bite
+      // Direct removal = 1.5, each orphan cascade kill = 3.0 (high value: they die, not flip)
+      const score = 1.5 + sim.cascadeSize * 3.0 - biteCost;
       consider({ type: "bite", x: b.x, y: b.y }, score);
     }
   }
+
   if (best === null || best.score < 0) return { type: "pass" };
   return best.action;
 }
 
 // Hard bot: 2-ply minimax with eval function.
-// For each of my candidate moves, simulate, then for each enemy's best response,
-// pick the worst case for me. Then pick the move that maximizes my worst case.
-//
-// To keep it tractable, we only consider top-K candidates by greedy score at
-// each level.
+// Bites are evaluated with a penalty that shrinks when the cascade is large,
+// so the bot aggressively seeks high-cascade cuts rather than ignoring bites.
 function pickHardMove(game, playerIdx) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
@@ -567,7 +607,6 @@ function pickHardMove(game, playerIdx) {
   const TOP_K_OPP = 4;
 
   const evaluateBoard = (board, heads, size, me) => {
-    // My net = my cells - sum of others' cells, weighted by head safety
     let myCells = 0;
     let totalEnemy = 0;
     for (let y = 0; y < size; y++) {
@@ -578,9 +617,9 @@ function pickHardMove(game, playerIdx) {
       }
     }
     const myHead = heads.find(h => h && h.playerNum === me);
-    let myThreat = myHead ? headThreatLevel(board, myHead, size) : 3;
-    let myCaptured = myHead ? isHeadCaptured(board, myHead, size) : true;
+    const myCaptured = myHead ? isHeadCaptured(board, myHead, size) : true;
     if (myCaptured) return -10000;
+    const myThreat = myHead ? headThreatLevel(board, myHead, size) : 3;
     let opponentRisk = 0;
     for (const h of heads) {
       if (h && h.playerNum !== me) {
@@ -591,7 +630,6 @@ function pickHardMove(game, playerIdx) {
     return myCells - totalEnemy - myThreat * 8 + opponentRisk * 0.5;
   };
 
-  // Generate my top-K candidate actions by greedy eval
   const candidates = [];
   const placements = [...enumeratePlacements(
     game.board, game.size, game.heads, playerNum, piece
@@ -599,7 +637,7 @@ function pickHardMove(game, playerIdx) {
   for (const p of placements) {
     const b = cloneBoard(game.board);
     const h = cloneHeads(game.heads);
-    const sim = simulatePlacement(b, h, game.size, playerNum, p.cells, null);
+    simulatePlacement(b, h, game.size, playerNum, p.cells);
     const myHead = h.find(x => x && x.playerNum === playerNum);
     if (myHead && isHeadCaptured(b, myHead, game.size)) continue;
     const greedyScore = evaluateBoard(b, h, game.size, playerNum);
@@ -608,32 +646,31 @@ function pickHardMove(game, playerIdx) {
       simBoard: b, simHeads: h, greedyScore
     });
   }
+
   if (game.bitesRemaining[playerIdx] > 0) {
     const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum)];
     for (const b of bites) {
       const bd = cloneBoard(game.board);
       const hd = cloneHeads(game.heads);
-      simulateBite(bd, hd, game.size, playerNum, b.x, b.y);
-      const greedyScore = evaluateBoard(bd, hd, game.size, playerNum) - 4;
+      const simResult = simulateBite(bd, hd, game.size, playerNum, b.x, b.y);
+      // Penalty shrinks as cascade grows: big cuts are genuinely strong moves.
+      const bitePenalty = Math.max(0, 2 - simResult.cascadeSize);
+      const greedyScore = evaluateBoard(bd, hd, game.size, playerNum) - bitePenalty;
       candidates.push({
         action: { type: "bite", x: b.x, y: b.y },
         simBoard: bd, simHeads: hd, greedyScore
       });
     }
   }
+
   candidates.sort((a, b) => b.greedyScore - a.greedyScore);
   const topMe = candidates.slice(0, TOP_K);
-
   if (topMe.length === 0) return { type: "pass" };
 
-  // For each top candidate, simulate the *worst* opponent reply (across all
-  // remaining alive players, taking the worst for me).
   let bestAction = null;
   let bestWorstCaseScore = -Infinity;
   for (const cand of topMe) {
     let worstForMe = cand.greedyScore;
-    // For each other alive player, simulate their best move with their current
-    // piece and pick the move that hurts me most.
     for (let otherIdx = 0; otherIdx < game.heads.length; otherIdx++) {
       if (otherIdx === playerIdx) continue;
       if (game.eliminated[otherIdx]) continue;
@@ -642,24 +679,17 @@ function pickHardMove(game, playerIdx) {
       const oppPlacements = [...enumeratePlacements(
         cand.simBoard, game.size, cand.simHeads, otherNum, otherPiece
       )];
-      let opPickScore = cand.greedyScore;
-      let foundReply = false;
-      // Score each opp reply from MY perspective; pick the one that minimizes my score
-      const oppCandidates = [];
+      const oppScores = [];
       for (const op of oppPlacements) {
         const b2 = cloneBoard(cand.simBoard);
         const h2 = cloneHeads(cand.simHeads);
-        simulatePlacement(b2, h2, game.size, otherNum, op.cells, null);
-        const score = evaluateBoard(b2, h2, game.size, playerNum);
-        oppCandidates.push(score);
+        simulatePlacement(b2, h2, game.size, otherNum, op.cells);
+        oppScores.push(evaluateBoard(b2, h2, game.size, playerNum));
       }
-      oppCandidates.sort((a, b) => a - b); // ascending = worst-for-me first
-      const consider = oppCandidates.slice(0, TOP_K_OPP);
-      for (const s of consider) {
-        if (s < opPickScore) opPickScore = s;
-        foundReply = true;
+      oppScores.sort((a, b) => a - b);
+      for (const s of oppScores.slice(0, TOP_K_OPP)) {
+        if (s < worstForMe) worstForMe = s;
       }
-      if (foundReply && opPickScore < worstForMe) worstForMe = opPickScore;
     }
     if (worstForMe > bestWorstCaseScore) {
       bestWorstCaseScore = worstForMe;
@@ -727,14 +757,11 @@ export class Room extends DurableObject {
   async handleConnect(name, role, creatorPayload) {
     const sockets = this.ctx.getWebSockets();
 
-    // If game is started, only allow if the connection corresponds to a slot
-    // that's lost its socket (reconnect) — for v1 we just refuse.
     if (this.started) {
       return new Response("game already started", { status: 403 });
     }
 
     if (role === "create") {
-      // First connection only
       if (sockets.length > 0) {
         return new Response("room already created", { status: 403 });
       }
@@ -745,7 +772,6 @@ export class Room extends DurableObject {
       await this.ctx.storage.put("settings", this.settings);
       await this.ctx.storage.put("slots", this.slots);
     } else {
-      // Joining: claim the first open human slot
       const idx = this.slots.findIndex(s => s.type === "human" && !s.occupied);
       if (idx < 0) return new Response("no open slot", { status: 403 });
       this.slots[idx].name = name;
@@ -755,8 +781,6 @@ export class Room extends DurableObject {
 
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
-    // Find the slot index this socket owns by name (cheap and unambiguous
-    // because we just set it).
     const slotIdx = this.slots.findIndex(s => s.name === name && s.occupied);
     server.serializeAttachment({ slotIdx, name });
     this.ctx.acceptWebSocket(server);
@@ -766,7 +790,6 @@ export class Room extends DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  // Assemble the per-recipient view of state.
   publicState(perspectiveSlotIdx) {
     const names = this.slots.map(s => s.name);
     const slotsView = this.slots.map(s => ({ type: s.type, name: s.name, occupied: s.occupied }));
@@ -777,18 +800,12 @@ export class Room extends DurableObject {
         names,
         yourIndex: perspectiveSlotIdx,
         settings: this.settings,
-        // Slot 0 (host) gets a hint that they can configure
         isHost: perspectiveSlotIdx === 0,
       };
     }
     const lookahead = this.settings.lookahead || 0;
     let myUpcoming = [];
     if (perspectiveSlotIdx != null && lookahead > 0) {
-      // Slot index → playerIdx: we built the game with playerCount active slots,
-      // in slot order. So slot N maps to its game playerIdx by counting active
-      // slots up to N. But we don't *yet* support empty slots in the middle
-      // changing playerIdx — we always activate slots in order 0,1,2,3 skipping
-      // empties. So we need a slot→playerIdx map.
       const playerIdx = this.slotToPlayerIdx(perspectiveSlotIdx);
       if (playerIdx != null && this.game.bags[playerIdx]) {
         myUpcoming = this.game.bags[playerIdx].slice(0, lookahead);
@@ -806,13 +823,13 @@ export class Room extends DurableObject {
       size: this.game.size,
       heads: this.game.heads,
       threats,
-      turn: this.game.turn, // playerIdx (not slot index)
+      turn: this.game.turn,
       turnSlot: this.playerIdxToSlot(this.game.turn),
       nextPiece: this.game.nextPiece,
       bitesRemaining: this.game.bitesRemaining,
       eliminated: this.game.eliminated,
       upcoming: myUpcoming,
-      yourIndex: perspectiveSlotIdx, // the slot index for this client
+      yourIndex: perspectiveSlotIdx,
       yourPlayerIdx: this.slotToPlayerIdx(perspectiveSlotIdx),
       finished: this.game.finished,
       winner: this.game.winner,
@@ -825,7 +842,6 @@ export class Room extends DurableObject {
     };
   }
 
-  // Slot↔playerIdx mapping. Active slots (non-empty) get playerIdx in order.
   slotToPlayerIdx(slotIdx) {
     if (slotIdx == null) return null;
     if (!this.game) return null;
@@ -837,6 +853,7 @@ export class Room extends DurableObject {
     }
     return null;
   }
+
   playerIdxToSlot(playerIdx) {
     if (playerIdx == null || !this.game) return null;
     let p = 0;
@@ -866,9 +883,8 @@ export class Room extends DurableObject {
     const slotIdx = att.slotIdx;
 
     if (!this.started) {
-      // Lobby messages
       if (msg.type === "config_slots") {
-        if (slotIdx !== 0) return; // only host
+        if (slotIdx !== 0) return;
         await this.handleConfigSlots(msg);
         return;
       }
@@ -885,7 +901,6 @@ export class Room extends DurableObject {
       return;
     }
 
-    // In-game messages
     const playerIdx = this.slotToPlayerIdx(slotIdx);
     if (playerIdx == null) return;
 
@@ -931,28 +946,21 @@ export class Room extends DurableObject {
 
   async handleConfigSlots(msg) {
     if (!Array.isArray(msg.slots) || msg.slots.length !== MAX_PLAYERS) return;
-    // Preserve names of currently-occupied human slots
     const newSlots = msg.slots.map((s, i) => {
       const t = SLOT_TYPES.includes(s.type) ? s.type : "empty";
       const existing = this.slots[i];
       if (i === 0) {
-        // host's slot is always human, keep their name
         return { type: "human", name: existing.name, occupied: existing.occupied };
       }
       if (t === "human" && existing.type === "human" && existing.occupied) {
-        // preserve someone already in this slot
         return { type: "human", name: existing.name, occupied: true };
       }
       return { type: t, name: null, occupied: false };
     });
-    // At least 2 active
     const active = newSlots.filter(s => s.type !== "empty").length;
     if (active < MIN_PLAYERS) return;
-    // If we kicked out a human who was in a slot that's now non-human or empty,
-    // close their socket politely.
     for (let i = 0; i < this.slots.length; i++) {
       if (this.slots[i].occupied && newSlots[i].type !== "human") {
-        // find their socket and close
         for (const ws of this.ctx.getWebSockets()) {
           const att = ws.deserializeAttachment();
           if (att && att.slotIdx === i) {
@@ -973,11 +981,10 @@ export class Room extends DurableObject {
   }
 
   async handleStartGame() {
-    // All human slots must be occupied; at least 2 active
     const active = this.slots.filter(s => s.type !== "empty").length;
     if (active < MIN_PLAYERS) return;
     for (const s of this.slots) {
-      if (s.type === "human" && !s.occupied) return; // wait
+      if (s.type === "human" && !s.occupied) return;
     }
     this.started = true;
     this.game = newGame(this.settings, this.slots);
@@ -988,11 +995,9 @@ export class Room extends DurableObject {
     this.scheduleBotIfNeeded();
   }
 
-  // After any state change, check if the current turn belongs to a bot;
-  // if so, schedule a bot move with a small delay so animations play.
   scheduleBotIfNeeded() {
     if (!this.started || !this.game || this.game.finished) return;
-    if (this.botTimer) return; // already scheduled
+    if (this.botTimer) return;
     const slotIdx = this.playerIdxToSlot(this.game.turn);
     if (slotIdx == null) return;
     const slot = this.slots[slotIdx];
@@ -1016,7 +1021,6 @@ export class Room extends DurableObject {
     if (action.type === "move") r = this.handleMove(playerIdx, action);
     else if (action.type === "bite") r = this.handleBite(playerIdx, action);
     else r = this.handlePass(playerIdx);
-    // Errors from bots are bugs — log and pass to keep game going
     if (r && r.error) {
       console.warn("bot error", slot.type, r.error);
       this.handlePass(playerIdx);
@@ -1026,24 +1030,24 @@ export class Room extends DurableObject {
 
   resolveEndOfTurn() {
     const g = this.game;
-    // Process eliminations: any head whose line is captured.
-    // We do this in a loop because cascading eliminations can chain.
+    const moverIdx = (g.lastEvents && typeof g.lastEvents.player === "number")
+      ? g.lastEvents.player : null;
+
+    // Process eliminations in a loop to catch cascades.
     while (true) {
       let didElim = false;
       for (let i = 0; i < g.heads.length; i++) {
         if (g.eliminated[i]) continue;
         if (isHeadCaptured(g.board, g.heads[i], g.size)) {
-          this.eliminatePlayer(i);
+          this.eliminatePlayer(i, moverIdx);
           didElim = true;
         }
       }
       if (!didElim) break;
     }
 
-    // Win condition checks
     const aliveIdxs = g.heads.map((_, i) => i).filter(i => !g.eliminated[i]);
     if (this.settings.winCondition === "first_death") {
-      // Game ends as soon as anyone is eliminated.
       if (aliveIdxs.length < g.heads.length) {
         g.finished = true;
         g.endReason = "first_death";
@@ -1051,7 +1055,6 @@ export class Room extends DurableObject {
         return;
       }
     } else {
-      // Both "last_standing" and "cell_count" end immediately when only 1 alive
       if (aliveIdxs.length === 1) {
         g.finished = true;
         g.endReason = "head_captured";
@@ -1066,11 +1069,9 @@ export class Room extends DurableObject {
       }
     }
 
-    // Advance turn to next non-eliminated player
     g.turn = this.nextLivingTurn(g.turn);
     dealPiece(g, g.turn);
 
-    // Stalemate: nobody can do anything
     let cycle = 0;
     while (
       cycle < g.heads.length &&
@@ -1115,7 +1116,8 @@ export class Room extends DurableObject {
     g.winner = winners.length === 1 ? winners[0] : winners;
   }
 
-  eliminatePlayer(playerIdx) {
+  // captorIdx: the playerIdx who triggered the elimination (gets bite bonus).
+  eliminatePlayer(playerIdx, captorIdx) {
     const g = this.game;
     g.eliminated[playerIdx] = true;
     const head = g.heads[playerIdx];
@@ -1124,43 +1126,33 @@ export class Room extends DurableObject {
     const playerColor = head.playerNum;
     g.moveLog.push({ player: playerIdx, eliminated: true });
 
-    // Remove the head from the board
     g.board[head.y][head.x] = 0;
-    g.heads[playerIdx] = null; // remove from heads array
+    g.heads[playerIdx] = null;
 
-    // Process the player's remaining cells based on fate
     if (fate === "die") {
-      for (let y = 0; y < g.size; y++) {
-        for (let x = 0; x < g.size; x++) {
+      for (let y = 0; y < g.size; y++)
+        for (let x = 0; x < g.size; x++)
           if (g.board[y][x] === playerColor) g.board[y][x] = 0;
-        }
-      }
     } else if (fate === "neutral") {
-      for (let y = 0; y < g.size; y++) {
-        for (let x = 0; x < g.size; x++) {
+      for (let y = 0; y < g.size; y++)
+        for (let x = 0; x < g.size; x++)
           if (g.board[y][x] === playerColor) g.board[y][x] = -1;
-        }
-      }
     } else if (fate === "convert") {
-      // Find who eliminated them — the player who just moved (current turn)
-      // before resolveEndOfTurn advanced. We pull from lastEvents.
-      const ev = g.lastEvents;
-      const captorIdx = (ev && typeof ev.player === "number") ? ev.player : null;
       if (captorIdx != null && !g.eliminated[captorIdx]) {
         const captorNum = captorIdx + 1;
-        for (let y = 0; y < g.size; y++) {
-          for (let x = 0; x < g.size; x++) {
+        for (let y = 0; y < g.size; y++)
+          for (let x = 0; x < g.size; x++)
             if (g.board[y][x] === playerColor) g.board[y][x] = captorNum;
-          }
-        }
       } else {
-        // Fallback to die if we can't determine captor
-        for (let y = 0; y < g.size; y++) {
-          for (let x = 0; x < g.size; x++) {
+        for (let y = 0; y < g.size; y++)
+          for (let x = 0; x < g.size; x++)
             if (g.board[y][x] === playerColor) g.board[y][x] = 0;
-          }
-        }
       }
+    }
+
+    // Award bite bonus to the captor for eliminating a player.
+    if (captorIdx != null && captorIdx !== playerIdx && !g.eliminated[captorIdx]) {
+      awardBiteBonus(g, captorIdx, BITE_ELIM_BONUS);
     }
   }
 
@@ -1180,7 +1172,6 @@ export class Room extends DurableObject {
 
     for (const [x, y] of cells) g.board[y][x] = playerNum;
     const flipped = captureFlanked(g.board, playerNum, g.size, g.heads.filter(h => h));
-    // For orphan-convert: all orphans (of any color) go to the mover
     const convertTo = {};
     for (const h of g.heads) if (h) convertTo[h.playerNum] = playerNum;
     const orphans = processOrphans(g.board, g.heads.filter(h => h), g.size, "convert", convertTo);
@@ -1189,6 +1180,16 @@ export class Room extends DurableObject {
       if (parseInt(p, 10) !== playerNum) allConverted.push(...orphans[p]);
     }
 
+    // Award a bonus bite for a big capture/convert combo.
+    const totalCaptured = flipped.length + allConverted.length;
+    let bitesBonusEarned = 0;
+    if (totalCaptured >= BITE_CAPTURE_BONUS_THRESHOLD) {
+      awardBiteBonus(g, playerIdx, 1);
+      bitesBonusEarned++;
+    }
+    // Check colony-size milestones.
+    bitesBonusEarned += checkBiteMilestones(g, playerIdx);
+
     g.consecutivePasses = 0;
     g.lastEvents = {
       kind: "place",
@@ -1196,6 +1197,7 @@ export class Room extends DurableObject {
       placed: cells,
       flipped,
       converted: allConverted,
+      bitesEarned: bitesBonusEarned,
     };
     g.moveLog.push({
       player: playerIdx,
@@ -1229,12 +1231,21 @@ export class Room extends DurableObject {
       if (parseInt(p, 10) !== playerNum) killedAll.push(...orphans[p]);
     }
 
+    // Award a bonus bite for a large cascade kill.
+    let bitesBonusEarned = 0;
+    if (killedAll.length >= BITE_CASCADE_THRESHOLD) {
+      awardBiteBonus(g, playerIdx, 1);
+      bitesBonusEarned++;
+    }
+    bitesBonusEarned += checkBiteMilestones(g, playerIdx);
+
     g.consecutivePasses = 0;
     g.lastEvents = {
       kind: "bite",
       player: playerIdx,
       bitten: [msg.x, msg.y],
       killed: killedAll,
+      bitesEarned: bitesBonusEarned,
     };
     g.moveLog.push({
       player: playerIdx,
@@ -1257,7 +1268,6 @@ export class Room extends DurableObject {
 
     const aliveCount = g.eliminated.filter(e => !e).length;
     if (g.consecutivePasses >= aliveCount) {
-      // All living players passed in succession
       this.endByCellCount("mutual_pass");
       return { ok: true };
     }
@@ -1271,8 +1281,7 @@ export class Room extends DurableObject {
     if (!g || g.finished) return { error: "game not active" };
     g.lastEvents = { kind: "resign", player: playerIdx };
     g.moveLog.push({ player: playerIdx, resigned: true });
-    this.eliminatePlayer(playerIdx);
-    // Treat resignation as a head-loss for win-condition purposes
+    this.eliminatePlayer(playerIdx, null);
     this.resolveEndOfTurn();
     return { ok: true };
   }
@@ -1285,19 +1294,17 @@ export class Room extends DurableObject {
       this.slots[slotIdx].occupied = false;
     }
     if (this.game && !this.game.finished && this.started) {
-      // Treat disconnection as resignation for that player
       const playerIdx = this.slotToPlayerIdx(slotIdx);
       if (playerIdx != null && !this.game.eliminated[playerIdx]) {
         this.game.lastEvents = { kind: "resign", player: playerIdx };
         this.game.moveLog.push({ player: playerIdx, resigned: true, disconnected: true });
-        this.eliminatePlayer(playerIdx);
+        this.eliminatePlayer(playerIdx, null);
         this.resolveEndOfTurn();
         await this.ctx.storage.put("game", this.game);
         this.broadcastState();
         this.scheduleBotIfNeeded();
       }
     } else if (!this.started) {
-      // In lobby: free the slot
       await this.ctx.storage.put("slots", this.slots);
       this.broadcastState();
     }
