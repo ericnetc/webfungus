@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>WebFungus — Head & Colony Prototypes</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0d100a; color: #c8d4a0; font-family: monospace; padding: 24px; }
+h1 { color: #7ed957; letter-spacing: 4px; font-size: 18px; margin-bottom: 6px; }
+p.sub { color: #4a5a38; font-size: 11px; letter-spacing: 2px; margin-bottom: 28px; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+.card { background: #141a10; border: 1px solid #2a3520; padding: 16px; }
+.card h2 { font-size: 13px; color: #f4c430; letter-spacing: 3px; margin-bottom: 4px; }
+.card p { font-size: 10px; color: #4a5a38; letter-spacing: 1px; margin-bottom: 12px; line-height: 1.6; }
+canvas { display: block; background: #0d100a; border: 1px solid #1e2a16; }
+.row2 { margin-top: 24px; }
+</style>
+</head>
+<body>
+<h1>// FUNGAL PROTOTYPE GALLERY</h1>
+<p class="sub">Three head variants · Two colony network variants · Click any canvas to pause/resume</p>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>HEAD A — CLICKER</h2>
+    <p>Dense layered plates erupting outward. Cordyceps fruiting body style. Encrusted, aggressive, asymmetric.</p>
+    <canvas id="headA" width="280" height="280"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>HEAD B — MYCORRHIZA</h2>
+    <p>Soft central nucleus with radiating fine thread hyphae. Delicate but sprawling. Bioluminescent vein glow.</p>
+    <canvas id="headB" width="280" height="280"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>HEAD C — BLOOM</h2>
+    <p>Grotesque flower: peeling lobes, exposed wet core, dripping spore mass. Horror-flower aesthetic.</p>
+    <canvas id="headC" width="280" height="280"></canvas>
+  </div>
+
+  <div class="card row2">
+    <h2>NETWORK A — DENSE WEB</h2>
+    <p>Heavy mycelium cords between cells. Bundled hyphae visible as thick ropes. Substrate texture underneath.</p>
+    <canvas id="netA" width="280" height="280"></canvas>
+  </div>
+
+  <div class="card row2">
+    <h2>NETWORK B — THREAD VEIL</h2>
+    <p>Ultra-fine branching filaments. Each cell sprouts dozens of cilia that reach toward neighbors. Sparse, eerie.</p>
+    <canvas id="netB" width="280" height="280"></canvas>
+  </div>
+
+  <div class="card row2">
+    <h2>NETWORK C — BLOB MASS</h2>
+    <p>Cells merge into continuous irregular blobs. No visible gaps between adjacent cells. Pulsing unified colony.</p>
+    <canvas id="netC" width="280" height="280"></canvas>
+  </div>
+
+</div>
+
+<script>
+let T = 0;
+const paused = new Set();
+
+// ─── HEAD A: CLICKER / CORDYCEPS PLATES ───────────────────────────────────────
+function drawHeadA(canvas, t) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const cx = W/2, cy = H/2;
+  ctx.fillStyle = "#0d100a";
+  ctx.fillRect(0,0,W,H);
+
+  const color = "#f4c430", glow = "#ffe066";
+
+  // Erupting spore stalks behind
+  ctx.save();
+  for (let i = 0; i < 22; i++) {
+    const baseAngle = (i / 22) * Math.PI * 2;
+    const wave = 0.15 * Math.sin(t * 0.0018 + i * 1.7);
+    const angle = baseAngle + wave;
+    const len = 52 + 18 * Math.sin(t * 0.0024 + i * 2.3);
+    const thick = 1.5 + 1.2 * Math.abs(Math.sin(t * 0.002 + i));
+    ctx.strokeStyle = `rgba(180,140,30,0.55)`;
+    ctx.lineWidth = thick;
+    ctx.shadowColor = glow; ctx.shadowBlur = 6;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(cx + 38 * Math.cos(angle), cy + 38 * Math.sin(angle));
+    // Slight curve
+    const mid = len * 0.55;
+    const bx = cx + (mid + 8) * Math.cos(angle + 0.18);
+    const by = cy + (mid + 8) * Math.sin(angle + 0.18);
+    ctx.quadraticCurveTo(bx, by, cx + len * Math.cos(angle), cy + len * Math.sin(angle));
+    ctx.stroke();
+    // Spore cap at tip
+    ctx.fillStyle = `rgba(240,200,40,0.75)`;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(cx + len * Math.cos(angle), cy + len * Math.sin(angle), thick * 2.2, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Layered plate body — 7 layers of jagged arcs
+  const layers = 7;
+  for (let layer = layers; layer >= 1; layer--) {
+    const r = 18 + layer * 8;
+    const segments = 9 + layer;
+    ctx.save();
+    ctx.shadowColor = layer < 4 ? "#2a4010" : glow;
+    ctx.shadowBlur = layer < 4 ? 2 : 12 - layer;
+    const lightness = 15 + layer * 5;
+    ctx.fillStyle = layer < 4 ? `rgb(${30+layer*6},${25+layer*5},${5})` : `rgb(${180+layer*6},${140+layer*5},${20+layer*4})`;
+    ctx.beginPath();
+    for (let s = 0; s < segments; s++) {
+      const a = (s / segments) * Math.PI * 2;
+      const jitter = 4 * Math.sin(t * 0.002 * layer + s * 3.1 + layer) + 2 * Math.sin(t * 0.0015 + s * 5.3);
+      const rx = r + jitter;
+      const ry = r * 0.82 + jitter * 0.6;
+      const px = cx + rx * Math.cos(a);
+      const py = cy + ry * Math.sin(a);
+      s === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    // Plate edge highlight
+    ctx.strokeStyle = layer > 4 ? `rgba(255,230,80,0.3)` : `rgba(100,80,20,0.2)`;
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Central wet maw
+  const mawPulse = 0.7 + 0.3 * Math.sin(t * 0.006);
+  const grad = ctx.createRadialGradient(cx, cy+4, 2, cx, cy, 22 * mawPulse);
+  grad.addColorStop(0, "#1a0a00");
+  grad.addColorStop(0.4, "#3d1500");
+  grad.addColorStop(1, "#f4c430");
+  ctx.save();
+  ctx.shadowColor = "#ff6600"; ctx.shadowBlur = 18 * mawPulse;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy+3, 22 * mawPulse, 16 * mawPulse, 0.2, 0, Math.PI*2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  // Inner glow
+  ctx.fillStyle = `rgba(255,80,0,${0.15 * mawPulse})`;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy+3, 14 * mawPulse, 10 * mawPulse, 0.2, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ─── HEAD B: MYCORRHIZA ────────────────────────────────────────────────────────
+function drawHeadB(canvas, t) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const cx = W/2, cy = H/2;
+  ctx.fillStyle = "#0d100a";
+  ctx.fillRect(0,0,W,H);
+
+  const color = "#7ed957", glow = "#b5ff8f";
+
+  // Ultra-fine thread hyphae
+  ctx.save();
+  ctx.lineCap = "round";
+  const THREADS = 48;
+  for (let i = 0; i < THREADS; i++) {
+    const baseAngle = (i / THREADS) * Math.PI * 2;
+    const wave1 = 0.3 * Math.sin(t * 0.0013 + i * 2.1);
+    const angle = baseAngle + wave1;
+    const len = 60 + 40 * Math.abs(Math.sin(t * 0.0019 + i * 1.3));
+    // Multiple branching sub-threads
+    const branches = 2 + (i % 3);
+    for (let b = 0; b < branches; b++) {
+      const bAngle = angle + (b - branches/2) * 0.18 + 0.05 * Math.sin(t * 0.003 + b * 4.1);
+      const bLen = len * (0.5 + 0.5 * (b === 0 ? 1 : 0.6));
+      const alpha = b === 0 ? 0.55 : 0.28;
+      ctx.strokeStyle = `rgba(126,217,87,${alpha})`;
+      ctx.lineWidth = b === 0 ? 0.9 : 0.5;
+      ctx.shadowColor = glow; ctx.shadowBlur = b === 0 ? 4 : 2;
+      ctx.beginPath();
+      ctx.moveTo(cx + 22 * Math.cos(angle), cy + 22 * Math.sin(angle));
+      const cpx = cx + (bLen * 0.5 + 10) * Math.cos(bAngle + 0.25);
+      const cpy = cy + (bLen * 0.5 + 10) * Math.sin(bAngle + 0.25);
+      ctx.quadraticCurveTo(cpx, cpy, cx + bLen * Math.cos(bAngle), cy + bLen * Math.sin(bAngle));
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // Soft nucleus body
+  const breathe = 0.88 + 0.12 * Math.sin(t * 0.004);
+  const r = 28 * breathe;
+  ctx.save();
+  ctx.shadowColor = glow; ctx.shadowBlur = 28;
+  const grad = ctx.createRadialGradient(cx - r*0.2, cy - r*0.2, 2, cx, cy, r);
+  grad.addColorStop(0, "#c8ffa0");
+  grad.addColorStop(0.35, "#7ed957");
+  grad.addColorStop(0.75, "#3a7a20");
+  grad.addColorStop(1, "#1a3a0a");
+  ctx.beginPath();
+  // Slightly lumpy
+  for (let s = 0; s < 32; s++) {
+    const a = (s / 32) * Math.PI * 2;
+    const lump = r + 3 * Math.sin(t * 0.003 + s * 5.1) + 2 * Math.sin(t * 0.002 + s * 3.3);
+    const px = cx + lump * Math.cos(a);
+    const py = cy + lump * Math.sin(a);
+    s === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.restore();
+
+  // Nucleus core — dense bright center
+  ctx.save();
+  ctx.shadowColor = "#ffffff"; ctx.shadowBlur = 12;
+  const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 10);
+  coreGrad.addColorStop(0, "rgba(255,255,240,0.9)");
+  coreGrad.addColorStop(0.5, "rgba(200,255,150,0.5)");
+  coreGrad.addColorStop(1, "rgba(100,200,60,0)");
+  ctx.beginPath();
+  ctx.arc(cx, cy, 10 * (0.8 + 0.2 * Math.sin(t * 0.008)), 0, Math.PI*2);
+  ctx.fillStyle = coreGrad;
+  ctx.fill();
+  ctx.restore();
+
+  // Pulsing rings
+  for (let ring = 0; ring < 3; ring++) {
+    const phase = (t * 0.002 + ring * 0.5) % 1;
+    const ringR = 22 + phase * 80;
+    const alpha = (1 - phase) * 0.3;
+    ctx.save();
+    ctx.strokeStyle = `rgba(126,217,87,${alpha})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ─── HEAD C: BLOOM / GROTESQUE FLOWER ─────────────────────────────────────────
+function drawHeadC(canvas, t) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const cx = W/2, cy = H/2;
+  ctx.fillStyle = "#0d100a";
+  ctx.fillRect(0,0,W,H);
+
+  const color = "#b388eb", glow = "#d8b8ff";
+
+  // Drip trails
+  ctx.save();
+  for (let d = 0; d < 8; d++) {
+    const angle = (d / 8) * Math.PI * 2 + 0.4;
+    const dripLen = 20 + 15 * Math.abs(Math.sin(t * 0.0015 + d * 2.7));
+    const sx = cx + 16 * Math.cos(angle);
+    const sy = cy + 16 * Math.sin(angle);
+    const ex = sx + dripLen * Math.cos(angle + Math.PI/2 * 0.1);
+    const ey = sy + dripLen * Math.sin(angle + Math.PI/2 * 0.1) + dripLen * 0.6;
+    ctx.strokeStyle = `rgba(180,136,235,0.35)`;
+    ctx.lineWidth = 1.5 + Math.sin(t * 0.002 + d) * 0.8;
+    ctx.lineCap = "round";
+    ctx.shadowColor = glow; ctx.shadowBlur = 6;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+    // Droplet at end
+    ctx.fillStyle = `rgba(180,136,235,0.5)`;
+    ctx.beginPath(); ctx.arc(ex, ey, 2.5, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+
+  // Peeling lobes — 6 petals
+  const LOBES = 6;
+  for (let lobe = 0; lobe < LOBES; lobe++) {
+    const baseA = (lobe / LOBES) * Math.PI * 2;
+    const peelWave = 0.12 * Math.sin(t * 0.002 + lobe * 1.8);
+    const angle = baseA + peelWave;
+    const lobeLen = 52 + 10 * Math.sin(t * 0.0025 + lobe * 2.4);
+    const lobeW = 18 + 4 * Math.sin(t * 0.002 + lobe * 3.1);
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    // Lobe shape — elongated with curl at tip
+    const curlBack = 8 * Math.sin(t * 0.003 + lobe);
+    const grad = ctx.createLinearGradient(0, 0, lobeLen, 0);
+    grad.addColorStop(0, `rgba(80,40,100,0.9)`);
+    grad.addColorStop(0.5, `rgba(150,100,200,0.8)`);
+    grad.addColorStop(1, `rgba(200,170,240,0.5)`);
+    ctx.shadowColor = glow; ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.moveTo(12, 0);
+    ctx.bezierCurveTo(lobeLen*0.4, -lobeW, lobeLen*0.8, -lobeW*0.8, lobeLen, -curlBack);
+    ctx.bezierCurveTo(lobeLen*0.8, lobeW*0.8, lobeLen*0.4, lobeW, 12, 0);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(220,180,255,0.25)`;
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+    // Lobe vein
+    ctx.strokeStyle = `rgba(220,180,255,0.4)`;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(14, 0);
+    ctx.lineTo(lobeLen - 8, -curlBack * 0.5);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Central exposed core — wet, glistening
+  const coreR = 20 + 3 * Math.sin(t * 0.006);
+  ctx.save();
+  ctx.shadowColor = "#ff44aa"; ctx.shadowBlur = 22;
+  const coreGrad = ctx.createRadialGradient(cx - 4, cy - 4, 1, cx, cy, coreR);
+  coreGrad.addColorStop(0, "#fff0f8");
+  coreGrad.addColorStop(0.3, "#e060a0");
+  coreGrad.addColorStop(0.65, "#7020a0");
+  coreGrad.addColorStop(1, "#2a0040");
+  ctx.beginPath();
+  // Lumpy core edge
+  for (let s = 0; s < 24; s++) {
+    const a = (s / 24) * Math.PI * 2;
+    const lump = coreR + 3 * Math.sin(t * 0.004 + s * 4.3);
+    const px = cx + lump * Math.cos(a), py = cy + lump * Math.sin(a);
+    s === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = coreGrad;
+  ctx.fill();
+  // Specular
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  ctx.beginPath();
+  ctx.ellipse(cx - 5, cy - 6, 8, 5, -0.5, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  // Spore mass center
+  ctx.save();
+  ctx.shadowColor = "#cc66ff"; ctx.shadowBlur = 10;
+  ctx.fillStyle = `rgba(180,80,230,${0.4 + 0.3 * Math.sin(t * 0.008)})`;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 6 + 2 * Math.sin(t * 0.01), 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ─── NETWORK A: DENSE WEB ─────────────────────────────────────────────────────
+function drawNetA(canvas, t) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = "#0d100a";
+  ctx.fillRect(0,0,W,H);
+
+  const CELL = 46;
+  const cols = 6, rows = 6;
+  const ox = (W - cols * CELL) / 2;
+  const oy = (H - rows * CELL) / 2;
+
+  // Colony pattern — irregular blob
+  const alive = new Set();
+  const colony = [
+    [1,1],[2,1],[3,1],[4,1],
+    [1,2],[2,2],[3,2],[4,2],[5,2],
+    [0,3],[1,3],[2,3],[3,3],[4,3],
+    [1,4],[2,4],[3,4],
+    [2,5],
+  ];
+  for (const [cx,cy] of colony) alive.add(`${cx},${cy}`);
+
+  const color = "#f4c430", glow = "#ffe066";
+
+  // Draw thick mycelium cords between adjacent cells first
+  ctx.save();
+  ctx.lineCap = "round";
+  for (const k of alive) {
+    const [gx, gy] = k.split(",").map(Number);
+    const cx1 = ox + gx * CELL + CELL/2;
+    const cy1 = oy + gy * CELL + CELL/2;
+    for (const [dx, dy] of [[1,0],[0,1]]) {
+      const nx = gx+dx, ny = gy+dy;
+      if (!alive.has(`${nx},${ny}`)) continue;
+      const cx2 = ox + nx * CELL + CELL/2;
+      const cy2 = oy + ny * CELL + CELL/2;
+      const bendX = (cx1+cx2)/2 + CELL*0.12*Math.sin(t*0.002 + gx*1.9 + gy*0.7);
+      const bendY = (cy1+cy2)/2 + CELL*0.12*Math.cos(t*0.002 + gx*0.7 + gy*1.9);
+      // Thick cord (bundle of hyphae)
+      for (let strand = 0; strand < 4; strand++) {
+        const offset = (strand - 1.5) * 1.8;
+        ctx.strokeStyle = strand === 1 || strand === 2
+          ? `rgba(244,196,48,0.7)` : `rgba(180,130,20,0.35)`;
+        ctx.lineWidth = strand === 1 || strand === 2 ? 3.5 : 1.8;
+        ctx.shadowColor = glow; ctx.shadowBlur = strand < 2 ? 8 : 2;
+        ctx.beginPath();
+        ctx.moveTo(cx1 + offset * dy, cy1 + offset * dx);
+        ctx.quadraticCurveTo(
+          bendX + offset * dy, bendY + offset * dx,
+          cx2 + offset * dy, cy2 + offset * dx
+        );
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
+
+  // Draw cells as layered organic blobs
+  for (const k of alive) {
+    const [gx, gy] = k.split(",").map(Number);
+    const cx = ox + gx * CELL + CELL/2;
+    const cy = oy + gy * CELL + CELL/2;
+    const phase = t * 0.0022 + gx * 1.73 + gy * 2.53;
+    const squish = 0.12 * Math.sin(phase);
+    const tilt = 0.2 * Math.sin(t * 0.0017 + gx * 2.1 + gy * 1.4);
+    const rx = CELL * (0.4 + squish * 0.5);
+    const ry = CELL * (0.4 - squish * 0.5);
+
+    ctx.save();
+    ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.45;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, tilt, 0, Math.PI*2);
+    ctx.fill();
+    // Highlight
+    ctx.fillStyle = glow; ctx.globalAlpha = 0.3;
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.ellipse(cx - rx*0.22, cy - ry*0.25, rx*0.45, ry*0.32, tilt, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+}
+
+// ─── NETWORK B: THREAD VEIL ───────────────────────────────────────────────────
+function drawNetB(canvas, t) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = "#0d100a";
+  ctx.fillRect(0,0,W,H);
+
+  const CELL = 44;
+  const cols = 6, rows = 6;
+  const ox = (W - cols * CELL) / 2;
+  const oy = (H - rows * CELL) / 2;
+
+  const alive = new Set();
+  const colony = [
+    [1,1],[2,1],[3,1],[4,1],
+    [1,2],[2,2],[3,2],[4,2],[5,2],
+    [0,3],[1,3],[2,3],[3,3],[4,3],
+    [1,4],[2,4],[3,4],
+    [2,5],
+  ];
+  for (const [cx,cy] of colony) alive.add(`${cx},${cy}`);
+
+  const color = "#f4c430", glow = "#ffe066";
+
+  ctx.save();
+  ctx.lineCap = "round";
+
+  // Ultra-fine thread veil: each cell sprouts many cilia toward neighbors and open space
+  for (const k of alive) {
+    const [gx, gy] = k.split(",").map(Number);
+    const cx = ox + gx * CELL + CELL/2;
+    const cy = oy + gy * CELL + CELL/2;
+
+    // Threads reaching toward each neighbor
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]]) {
+      const nx = gx+dx, ny = gy+dy;
+      const isNeighbor = alive.has(`${nx},${ny}`);
+      const threadCount = isNeighbor ? 12 : 4;
+      const maxLen = isNeighbor ? CELL * 0.8 : CELL * 0.45;
+
+      for (let i = 0; i < threadCount; i++) {
+        const spread = (i - threadCount/2) / threadCount;
+        const baseAngle = Math.atan2(dy, dx) + spread * 0.6;
+        const wave = 0.08 * Math.sin(t * 0.003 + gx * 2.1 + gy * 1.7 + i * 3.3);
+        const angle = baseAngle + wave;
+        const len = maxLen * (0.4 + 0.6 * Math.abs(Math.sin(t * 0.002 + i * 2.7 + gx + gy)));
+        const alpha = isNeighbor ? 0.45 : 0.22;
+        ctx.strokeStyle = `rgba(244,196,48,${alpha})`;
+        ctx.lineWidth = isNeighbor ? 0.7 : 0.4;
+        ctx.shadowColor = glow; ctx.shadowBlur = isNeighbor ? 3 : 1;
+        ctx.beginPath();
+        ctx.moveTo(cx + CELL * 0.32 * Math.cos(baseAngle), cy + CELL * 0.32 * Math.sin(baseAngle));
+        // Curved thread
+        const cpx = cx + len * 0.55 * Math.cos(angle + 0.3);
+        const cpy = cy + len * 0.55 * Math.sin(angle + 0.3);
+        ctx.quadraticCurveTo(cpx, cpy,
+          cx + len * Math.cos(angle),
+          cy + len * Math.sin(angle));
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
+
+  // Minimal cell dots — just glowing nuclei
+  for (const k of alive) {
+    const [gx, gy] = k.split(",").map(Number);
+    const cx = ox + gx * CELL + CELL/2;
+    const cy = oy + gy * CELL + CELL/2;
+    const breathe = 0.8 + 0.2 * Math.sin(t * 0.004 + gx * 1.1 + gy * 1.7);
+    ctx.save();
+    ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.35;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.arc(cx, cy, CELL * 0.18 * breathe, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(cx - CELL*0.06, cy - CELL*0.06, CELL*0.06, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+}
+
+// ─── NETWORK C: BLOB MASS ──────────────────────────────────────────────────────
+function drawNetC(canvas, t) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = "#0d100a";
+  ctx.fillRect(0,0,W,H);
+
+  const CELL = 44;
+  const cols = 6, rows = 6;
+  const ox = (W - cols * CELL) / 2;
+  const oy = (H - rows * CELL) / 2;
+
+  const alive = new Set();
+  const colony = [
+    [1,1],[2,1],[3,1],[4,1],
+    [1,2],[2,2],[3,2],[4,2],[5,2],
+    [0,3],[1,3],[2,3],[3,3],[4,3],
+    [1,4],[2,4],[3,4],
+    [2,5],
+  ];
+  for (const [cx,cy] of colony) alive.add(`${cx},${cy}`);
+
+  const color = "#f4c430", glow = "#ffe066";
+
+  // Draw large overlapping blobs — cells merge into one mass
+  // First pass: large glow
+  ctx.save();
+  ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.6;
+  for (const k of alive) {
+    const [gx, gy] = k.split(",").map(Number);
+    const cx = ox + gx * CELL + CELL/2;
+    const cy = oy + gy * CELL + CELL/2;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.18;
+    ctx.beginPath();
+    ctx.arc(cx, cy, CELL * 0.65, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Second pass: solid merged blobs
+  ctx.save();
+  ctx.shadowColor = glow; ctx.shadowBlur = 8;
+  ctx.fillStyle = color;
+  for (const k of alive) {
+    const [gx, gy] = k.split(",").map(Number);
+    const cxc = ox + gx * CELL + CELL/2;
+    const cyc = oy + gy * CELL + CELL/2;
+    const phase = t * 0.002 + gx * 1.9 + gy * 2.3;
+    // Irregular 24-point blob
+    ctx.beginPath();
+    const pts = 24;
+    for (let s = 0; s < pts; s++) {
+      const a = (s / pts) * Math.PI * 2;
+      const base = CELL * 0.48;
+      const lump = base
+        + 4 * Math.sin(phase + s * 3.7)
+        + 3 * Math.sin(t * 0.003 + s * 5.1 + gx)
+        + 2 * Math.sin(t * 0.0018 + s * 7.3 + gy);
+      const px = cxc + lump * Math.cos(a);
+      const py = cyc + lump * Math.sin(a);
+      s === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Surface texture — vein-like dark channels on mass
+  ctx.save();
+  ctx.strokeStyle = `rgba(80,50,0,0.35)`;
+  ctx.lineWidth = 1.2;
+  ctx.lineCap = "round";
+  ctx.shadowBlur = 0;
+  for (const k of alive) {
+    const [gx, gy] = k.split(",").map(Number);
+    const cx = ox + gx * CELL + CELL/2;
+    const cy = oy + gy * CELL + CELL/2;
+    for (const [dx, dy] of [[1,0],[0,1]]) {
+      const nx = gx+dx, ny = gy+dy;
+      if (!alive.has(`${nx},${ny}`)) continue;
+      const cx2 = ox + nx * CELL + CELL/2;
+      const cy2 = oy + ny * CELL + CELL/2;
+      // Dark vein between merged cells
+      const mx = (cx+cx2)/2 + 3*Math.sin(t*0.002+gx*2);
+      const my = (cy+cy2)/2 + 3*Math.cos(t*0.002+gy*2);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.quadraticCurveTo(mx, my, cx2, cy2);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // Highlight sheen on mass surface
+  ctx.save();
+  ctx.globalAlpha = 0.22;
+  ctx.fillStyle = glow;
+  for (const k of alive) {
+    const [gx, gy] = k.split(",").map(Number);
+    const cx = ox + gx * CELL + CELL/2;
+    const cy = oy + gy * CELL + CELL/2;
+    // Only highlight cells at top edge of colony (no neighbor above)
+    if (alive.has(`${gx},${gy-1}`)) continue;
+    ctx.beginPath();
+    ctx.ellipse(cx - 4, cy - 6, CELL*0.22, CELL*0.12, -0.3, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Pulsing inner glow veins
+  for (const k of alive) {
+    const [gx, gy] = k.split(",").map(Number);
+    const cx = ox + gx * CELL + CELL/2;
+    const cy = oy + gy * CELL + CELL/2;
+    const p = 0.35 + 0.35 * Math.sin(t * 0.005 + gx * 1.3 + gy * 1.7);
+    ctx.save();
+    ctx.globalAlpha = p * 0.4;
+    ctx.shadowColor = glow; ctx.shadowBlur = 6;
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, CELL * 0.12, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ─── ANIMATION LOOP ───────────────────────────────────────────────────────────
+const canvases = {
+  headA: drawHeadA,
+  headB: drawHeadB,
+  headC: drawHeadC,
+  netA:  drawNetA,
+  netB:  drawNetB,
+  netC:  drawNetC,
+};
+
+for (const [id] of Object.entries(canvases)) {
+  document.getElementById(id).addEventListener("click", () => {
+    if (paused.has(id)) paused.delete(id);
+    else paused.add(id);
+  });
+}
+
+function loop() {
+  T = performance.now();
+  for (const [id, fn] of Object.entries(canvases)) {
+    if (!paused.has(id)) fn(document.getElementById(id), T);
+  }
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
