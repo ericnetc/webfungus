@@ -1271,6 +1271,14 @@ export class Room extends DurableObject {
     if (bitesBonusEarned > 0) awardBiteBonus(g, playerIdx, bitesBonusEarned);
     bitesBonusEarned += checkBiteMilestones(g, playerIdx);
 
+    // Award a bonus bite for a large cascade kill.
+    let bitesBonusEarned = 0;
+    if (killedAll.length >= BITE_CASCADE_THRESHOLD) {
+      awardBiteBonus(g, playerIdx, 1);
+      bitesBonusEarned++;
+    }
+    bitesBonusEarned += checkBiteMilestones(g, playerIdx);
+
     g.consecutivePasses = 0;
     g.lastEvents = {
       kind: "bite",
