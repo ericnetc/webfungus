@@ -323,6 +323,25 @@
   .hidden { display: none !important; }
   .err { color: var(--warn); font-size: 12px; margin-top: 8px; min-height: 16px; }
 
+  .replay-nav {
+    position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 8px; z-index: 5;
+    font-family: "VT323", monospace; font-size: 15px; letter-spacing: 2px;
+    background: rgba(22,26,18,0.9); border: 1px solid var(--grid-strong);
+    padding: 6px 14px; white-space: nowrap;
+  }
+  .replay-nav button {
+    background: transparent; border: 1px solid var(--text-dim); color: var(--text-dim);
+    padding: 3px 10px; font-family: inherit; font-size: 14px; letter-spacing: 1px; cursor: pointer;
+  }
+  .replay-nav button:hover { border-color: var(--p1); color: var(--p1); }
+  .replay-nav .back-btn { border-color: var(--p2); color: var(--p2); margin-right: 6px; }
+  .replay-nav .back-btn:hover { background: var(--p2); color: var(--bg-deep); }
+  .replay-nav .turn-label { color: var(--text-dim); min-width: 80px; text-align: center; }
+  .log-entry { cursor: pointer; }
+  .log-entry:hover { background: rgba(244,196,48,0.06); }
+  .log-entry.replay-active { background: rgba(244,196,48,0.12); border-left: 2px solid var(--p1); padding-left: 4px; }
+
   @media (max-width: 900px) {
     .app {
       grid-template-columns: 1fr;
@@ -456,10 +475,18 @@
   <main class="board-wrap">
     <div class="board-status" id="boardStatus"></div>
     <canvas id="board" width="640" height="640"></canvas>
+    <div class="replay-nav hidden" id="replayNav">
+      <button class="back-btn" id="replayBackBtn">← LIVE</button>
+      <span class="turn-label" id="replayTurnLabel">TURN 1</span>
+      <button id="replayPrevBtn">◀</button>
+      <button id="replayNextBtn">▶</button>
+    </div>
     <div class="game-over hidden" id="gameOver">
       <h1 id="goTitle">VICTORY</h1>
       <div class="sub" id="goSub">colony dominant</div>
-      <div style="display:flex; gap:12px;">
+      <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin-top:4px;">
+        <button id="exportBtn">EXPORT JSON</button>
+        <button id="viewReplayBtn">VIEW REPLAY</button>
         <button id="rematchBtn">REMATCH</button>
         <button id="quitBtn">MAIN MENU</button>
       </div>
@@ -518,7 +545,12 @@ let pulseT = 0;
 let anims = [];
 let lastSeenEventId = null;
 let pulseAnim = null;
-let pendingSlots = null; // host's local slot edits before sending
+let pendingSlots = null;
+let replaySnapshots = null;   // array of board snapshots, fetched on demand
+let replayFullLog = null;     // full moveLog from server, comes with snapshots
+let viewingTurn = null;       // index into replaySnapshots, null = live
+let replayReturnMode = "live"; // "live" | "results"
+let pendingReplayTurn = null;  // set while awaiting snapshot fetch
 
 function makeCode() {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -569,13 +601,28 @@ function connect(room, name, role, extra = {}) {
       myPlayerIdx = msg.yourPlayerIdx;
       const wasNewGame = !lastState || lastState.size !== msg.size ||
         (lastState.moveLog && msg.moveLog && msg.moveLog.length < lastState.moveLog.length);
-      if (wasNewGame) { anims = []; lastSeenEventId = null; }
+      if (wasNewGame) {
+        anims = []; lastSeenEventId = null;
+        replaySnapshots = null; replayFullLog = null;
+        viewingTurn = null; pendingReplayTurn = null;
+      }
       ingestEvents(msg);
       lastState = msg;
       boardSize = msg.size;
       enterGame();
       if (wasNewGame) fitCanvas();
       if (msg.turn !== myPlayerIdx) biteMode = false;
+      render();
+      return;
+    }
+    if (msg.type === "snapshots") {
+      replaySnapshots = msg.data || [];
+      replayFullLog = msg.fullLog || [];
+      if (pendingReplayTurn !== null) {
+        const t = Math.max(0, Math.min(pendingReplayTurn, replaySnapshots.length - 1));
+        enterReplay(t, replayReturnMode);
+        pendingReplayTurn = null;
+      }
       render();
       return;
     }
@@ -630,10 +677,73 @@ document.getElementById("codeInput").addEventListener("input", (e) => {
 document.getElementById("startBtn").onclick = () => {
   send({ type: "start_game" });
 };
+// --- Replay + export ---
+function requestReplay(snapIdx, returnMode) {
+  replayReturnMode = returnMode;
+  if (replaySnapshots) {
+    enterReplay(snapIdx, returnMode);
+  } else {
+    pendingReplayTurn = snapIdx;
+    send({ type: "get_snapshots" });
+  }
+}
+function enterReplay(snapIdx, returnMode) {
+  replayReturnMode = returnMode || "live";
+  viewingTurn = Math.max(0, Math.min(snapIdx, replaySnapshots.length - 1));
+  if (returnMode === "results") document.getElementById("gameOver").classList.add("hidden");
+  render();
+}
+function exitReplay() {
+  viewingTurn = null;
+  if (replayReturnMode === "results") document.getElementById("gameOver").classList.remove("hidden");
+  render();
+}
+function exportGame() {
+  if (!lastState) return;
+  const data = {
+    room: myRoom,
+    settings: lastState.settings,
+    slots: lastState.slots,
+    moveLog: replayFullLog || lastState.moveLog,
+    snapshots: replaySnapshots || [],
+    winner: lastState.winner,
+    endReason: lastState.endReason,
+    exportedAt: new Date().toISOString(),
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `webfungus-${myRoom || "game"}-${Date.now()}.json`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+document.getElementById("exportBtn").onclick = () => {
+  if (!replaySnapshots) {
+    send({ type: "get_snapshots" });
+    setTimeout(exportGame, 800);
+  } else {
+    exportGame();
+  }
+};
+document.getElementById("viewReplayBtn").onclick = () => {
+  const lastSnap = lastState.snapshotCount ? lastState.snapshotCount - 1 : 0;
+  requestReplay(lastSnap, "results");
+};
+document.getElementById("replayBackBtn").onclick = exitReplay;
+document.getElementById("replayPrevBtn").onclick = () => {
+  if (viewingTurn > 0) { viewingTurn--; render(); }
+};
+document.getElementById("replayNextBtn").onclick = () => {
+  if (replaySnapshots && viewingTurn < replaySnapshots.length - 1) { viewingTurn++; render(); }
+};
+
 document.getElementById("rematchBtn").onclick = () => send({ type: "rematch" });
 document.getElementById("quitBtn").onclick = () => {
   if (ws) ws.close();
   lastState = null; mySlotIdx = null; myPlayerIdx = null; myRoom = null;
+  replaySnapshots = null; replayFullLog = null; viewingTurn = null; pendingReplayTurn = null;
+  document.getElementById("replayNav").classList.add("hidden");
   document.getElementById("gameOver").classList.add("hidden");
   document.getElementById("gameInfo").classList.add("hidden");
   document.getElementById("waiting").classList.add("hidden");
@@ -1040,9 +1150,13 @@ function suppressedCellsForPlace(now) {
 
 function render() {
   if (!lastState) return;
-  const { board, turn, nextPiece, finished, heads, threats } = lastState;
+  const isReplay = viewingTurn !== null && replaySnapshots && replaySnapshots[viewingTurn];
+  const snap = isReplay ? replaySnapshots[viewingTurn] : null;
+  const board = snap ? snap.board : lastState.board;
+  const heads  = snap ? snap.heads  : lastState.heads;
+  const { turn, nextPiece, finished, threats } = lastState;
   const now = performance.now();
-  anims = anims.filter(a => now < a.startedAt + a.duration);
+  anims = isReplay ? [] : anims.filter(a => now < a.startedAt + a.duration);
 
   ctx.fillStyle = getCSS("--board-bg");
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1070,8 +1184,8 @@ function render() {
     }
   }
 
-  // Hover preview
-  if (!finished && turn === myPlayerIdx && hover.x >= 0) {
+  // Hover preview (disabled in replay mode)
+  if (!isReplay && !finished && turn === myPlayerIdx && hover.x >= 0) {
     if (biteMode) {
       drawBitePreview(hover.x, hover.y);
       const valid = checkValidBite(hover.x, hover.y, myPlayerIdx + 1, board, heads);
@@ -1111,8 +1225,8 @@ function drawCell(x, y, playerNum) {
   const phase = pulseT * 0.0022 + x * 1.73 + y * 2.53;
   const squish = 0.10 * Math.sin(phase);
   const tilt   = 0.18 * Math.sin(pulseT * 0.0017 + x * 2.1 + y * 1.4);
-  const rx = CELL * (0.43 + squish * 0.5);
-  const ry = CELL * (0.43 - squish * 0.5);
+  const rx = CELL * (0.30 + squish * 0.5);
+  const ry = CELL * (0.30 - squish * 0.5);
   ctx.shadowColor = glow; ctx.shadowBlur = CELL * 0.4;
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -1130,7 +1244,16 @@ function drawCell(x, y, playerNum) {
 function drawThreadVeil(board, heads) {
   if (!board) return;
   const t = pulseT;
-  ctx.lineCap = "round";
+  // Batch all thread segments by (glow, lineWidth, alpha) to minimise draw calls.
+  // Each player × direction-type combination maps to exactly one group.
+  const groups = new Map();
+  const addSeg = (glow, lw, alpha, sx, sy, cpx, cpy, ex, ey) => {
+    const key = `${glow}|${lw}|${alpha}`;
+    if (!groups.has(key)) groups.set(key, { glow, lw, alpha, s: [] });
+    const s = groups.get(key).s;
+    s.push(sx, sy, cpx, cpy, ex, ey);
+  };
+
   for (let y = 0; y < boardSize; y++) {
     for (let x = 0; x < boardSize; x++) {
       const v = board[y][x];
@@ -1145,29 +1268,40 @@ function drawThreadVeil(board, heads) {
           !(heads && heads.some(h => h && h.x === nx && h.y === ny));
         const isDiag = dx !== 0 && dy !== 0;
         if (!isNeighbor && !inBounds) continue;
-        const threadCount = isNeighbor ? (isDiag ? 5 : 10) : 3;
-        const maxLen = isNeighbor ? (isDiag ? CELL * 0.65 : CELL * 0.80) : CELL * 0.40;
+        const threadCount = isNeighbor ? (isDiag ? 4 : 8) : 2;
+        const maxLen = isNeighbor ? (isDiag ? CELL * 0.65 : CELL * 0.78) : CELL * 0.38;
+        const lw    = isNeighbor ? (isDiag ? 0.38 : 0.60) : 0.30;
+        const alpha = isNeighbor ? (isDiag ? 0.28 : 0.40) : 0.13;
         for (let i = 0; i < threadCount; i++) {
           const spread = (i - threadCount * 0.5) / threadCount;
           const baseAngle = Math.atan2(dy, dx) + spread * 0.55;
           const wave = 0.09 * Math.sin(t * 0.003 + x * 2.1 + y * 1.7 + i * 3.3);
           const angle = baseAngle + wave;
           const len = maxLen * (0.35 + 0.65 * Math.abs(Math.sin(t * 0.002 + i * 2.7 + x + y)));
-          ctx.strokeStyle = glow;
-          ctx.lineWidth = isNeighbor ? (isDiag ? 0.38 : 0.62) : 0.32;
-          ctx.globalAlpha = isNeighbor ? (isDiag ? 0.32 : 0.44) : 0.16;
-          ctx.shadowColor = glow; ctx.shadowBlur = isNeighbor ? 2.5 : 1;
-          ctx.beginPath();
-          ctx.moveTo(cx + CELL * 0.30 * Math.cos(baseAngle), cy + CELL * 0.30 * Math.sin(baseAngle));
-          const cpx = cx + len * 0.55 * Math.cos(angle + 0.25);
-          const cpy = cy + len * 0.55 * Math.sin(angle + 0.25);
-          ctx.quadraticCurveTo(cpx, cpy, cx + len * Math.cos(angle), cy + len * Math.sin(angle));
-          ctx.stroke();
+          addSeg(glow, lw, alpha,
+            cx + CELL * 0.28 * Math.cos(baseAngle),
+            cy + CELL * 0.28 * Math.sin(baseAngle),
+            cx + len * 0.55 * Math.cos(angle + 0.25),
+            cy + len * 0.55 * Math.sin(angle + 0.25),
+            cx + len * Math.cos(angle),
+            cy + len * Math.sin(angle)
+          );
         }
       }
     }
   }
-  ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.lineCap = "butt";
+
+  ctx.lineCap = "round"; ctx.shadowBlur = 0;
+  for (const { glow, lw, alpha, s } of groups.values()) {
+    ctx.strokeStyle = glow; ctx.lineWidth = lw; ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    for (let i = 0; i < s.length; i += 6) {
+      ctx.moveTo(s[i], s[i+1]);
+      ctx.quadraticCurveTo(s[i+2], s[i+3], s[i+4], s[i+5]);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1; ctx.lineCap = "butt";
 }
 
 function drawHead(head, threatLevel) {
@@ -1448,6 +1582,20 @@ function updateSidebar() {
     nextSection.style.display = upcoming.length > 0 ? "block" : "none";
   }
 
+  // Replay nav visibility
+  const replayNav = document.getElementById("replayNav");
+  if (viewingTurn !== null && replaySnapshots) {
+    replayNav.classList.remove("hidden");
+    document.getElementById("replayTurnLabel").textContent =
+      `TURN ${viewingTurn + 1} / ${replaySnapshots.length}`;
+    document.getElementById("replayBackBtn").textContent =
+      replayReturnMode === "results" ? "← RESULTS" : "← LIVE";
+    document.getElementById("replayPrevBtn").disabled = viewingTurn <= 0;
+    document.getElementById("replayNextBtn").disabled = viewingTurn >= replaySnapshots.length - 1;
+  } else {
+    replayNav.classList.add("hidden");
+  }
+
   const status = document.getElementById("boardStatus");
   if (lastState.finished) {
     status.textContent = "";
@@ -1488,8 +1636,8 @@ function updateBiteButton() {
 function updateLog() {
   const list = document.getElementById("logList");
   list.innerHTML = "";
-  if (!lastState.moveLog) return;
-  // Get player names by walking slots
+  const log = replayFullLog || lastState.moveLog;
+  if (!log) return;
   const playerNames = [];
   let pi = 0;
   for (const slot of lastState.slots) {
@@ -1500,10 +1648,20 @@ function updateLog() {
     playerNames.push(name);
     pi++;
   }
-  lastState.moveLog.slice().reverse().forEach((entry, i) => {
-    const turnNum = lastState.moveLog.length - i;
+  // Track which snapshot index corresponds to each log entry (skip eliminated/skipped)
+  let snapIdx = 0;
+  const entrySnapMap = log.map(entry => {
+    if (entry.eliminated || entry.skipped) return null;
+    return snapIdx++;
+  });
+
+  log.slice().reverse().forEach((entry, i) => {
+    const origIdx = log.length - 1 - i;
+    const turnNum = origIdx + 1;
+    const snapId  = entrySnapMap[origIdx];
     const div = document.createElement("div");
     div.className = "log-entry p" + (entry.player + 1);
+    if (viewingTurn !== null && snapId === viewingTurn) div.classList.add("replay-active");
     const turnTag = `<span class="turn-num">${String(turnNum).padStart(3,"0")}</span>`;
     const playerName = playerNames[entry.player] || ("P" + (entry.player + 1));
     const who = `<span class="who">${escapeHtml(playerName)}</span>`;
@@ -1518,6 +1676,9 @@ function updateLog() {
       const flipText = entry.flipped > 0 ? ` · <span class="flip">+${entry.flipped} flipped</span>` : "";
       const convText = entry.converted > 0 ? ` · <span class="flip">+${entry.converted} absorbed</span>` : "";
       div.innerHTML = `${turnTag} · ${who} placed ${entry.piece} @ ${entry.x},${entry.y}${flipText}${convText}`;
+    }
+    if (snapId !== null) {
+      div.addEventListener("click", () => requestReplay(snapId, lastState.finished ? "results" : "live"));
     }
     list.appendChild(div);
   });
