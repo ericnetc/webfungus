@@ -1727,7 +1727,11 @@ function updateLog() {
     pi++;
   }
   // Track which snapshot index corresponds to each log entry (skip eliminated/skipped)
-  let snapIdx = 0;
+  // When showing partial log (not full replay log), offset by how many snaps precede visible entries
+  const totalSnaps = lastState.snapshotCount || 0;
+  const primaryInLog = log.filter(e => !e.eliminated && !e.skipped).length;
+  const snapOffset = replayFullLog ? 0 : Math.max(0, totalSnaps - primaryInLog);
+  let snapIdx = snapOffset;
   const entrySnapMap = log.map(entry => {
     if (entry.eliminated || entry.skipped) return null;
     return snapIdx++;
@@ -1764,7 +1768,7 @@ function updateLog() {
 
 function updateGameOver() {
   const go = document.getElementById("gameOver");
-  if (!lastState.finished) { go.classList.add("hidden"); return; }
+  if (!lastState.finished || viewingTurn !== null) { go.classList.add("hidden"); return; }
   go.classList.remove("hidden");
   const title = document.getElementById("goTitle");
   const sub = document.getElementById("goSub");
