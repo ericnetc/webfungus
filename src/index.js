@@ -22,12 +22,12 @@ import { DurableObject } from "cloudflare:workers";
 // --- Configuration ranges ---
 const MIN_BOARD = 8, MAX_BOARD = 24, DEFAULT_BOARD = 20;
 const MIN_OFFSET = 1, MAX_OFFSET = 8, DEFAULT_OFFSET = 6;
-const STARTING_BITES = 3;        // base starting bites (scaled by board size at game start)
-const BITE_MAX = 6;              // hard cap on bites per player at any time
-const BITE_CAPTURE_BONUS_THRESHOLD = 5;  // capture+convert >= this many cells in one move = +1 bite
-const BITE_CASCADE_THRESHOLD = 3;        // orphan kills from a single bite >= this = +1 bite
-const BITE_ELIM_BONUS = 2;               // eliminating a player awards this many bites to the captor
-const BITE_MILESTONE_DIVISOR = 1.5;      // cells per milestone = floor(size * divisor); each milestone = +1 bite
+const STARTING_BITES = 3;
+const BITE_MAX = 6;
+const BITE_CAPTURE_BONUS_THRESHOLD = 5;
+const BITE_CASCADE_THRESHOLD = 3;
+const BITE_ELIM_BONUS = 2;
+const BITE_MILESTONE_DIVISOR = 1.5;
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
 const VALID_LOOKAHEAD = [0, 1, 3, 5];
@@ -38,6 +38,11 @@ const ELIM_FATES = ["die", "convert", "neutral"];
 const DEFAULT_ELIM_FATE = "die";
 const WIN_CONDITIONS = ["last_standing", "first_death", "cell_count"];
 const DEFAULT_WIN_CONDITION = "last_standing";
+const BITE_SCALINGS = ["off", "slow", "medium", "fast"];
+const DEFAULT_BITE_SCALING = "medium";
+const DEFAULT_HEAD_PROTECT = 1;    // 1-cell ring on by default
+const DEFAULT_COMEBACK_BONUS = true;
+const COMEBACK_THRESHOLD = 0.40;   // your colony < 40% of largest opponent = comeback active
 
 // Cell values:
 //   0 = empty
@@ -113,12 +118,22 @@ function validatePlacement(board, cells, playerNum, size, heads) {
 }
 
 // Bite: an enemy cell adjacent to one of mine.
-function validateBite(board, x, y, playerNum, size, heads) {
+// headProtectRadius: Chebyshev distance around any head that is bite-immune (0 = off).
+function validateBite(board, x, y, playerNum, size, heads, headProtectRadius = 0) {
   if (!inBounds(x, y, size)) return { ok: false, reason: "out of bounds" };
   if (isHeadAt(heads, x, y)) return { ok: false, reason: "cannot bite a head" };
   const v = board[y][x];
   if (v === 0 || v === -1 || v === playerNum) {
     return { ok: false, reason: "must bite an enemy cell" };
+  }
+  // Head protection ring: no biting within N cells (Chebyshev) of any head.
+  if (headProtectRadius > 0) {
+    for (const h of heads) {
+      if (!h) continue;
+      if (Math.max(Math.abs(x - h.x), Math.abs(y - h.y)) <= headProtectRadius) {
+        return { ok: false, reason: "protected zone near head" };
+      }
+    }
   }
   for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     const nx = x + dx, ny = y + dy;
@@ -291,10 +306,10 @@ function hasLegalPlacement(board, size, heads, playerNum, pieceType) {
   return false;
 }
 
-function hasLegalBite(board, size, heads, playerNum) {
+function hasLegalBite(board, size, heads, playerNum, headProtectRadius = 0) {
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      if (validateBite(board, x, y, playerNum, size, heads).ok) return true;
+      if (validateBite(board, x, y, playerNum, size, heads, headProtectRadius).ok) return true;
     }
   }
   return false;
@@ -326,17 +341,33 @@ function computeStartingBites(size) {
   // 8→3, 10→3, 12→3, 16→3, 20→4, 24→5
 }
 
-// Bite area radius scales as a fraction of the board, so it feels consistent
-// across all board sizes. Thresholds are intentionally high — large bites are a
-// late-game / near-draw option, not a routine mid-game tool.
-//   radius 0 (1×1): below 20% of the board filled
-//   radius 1 (3×3): 20–44% of the board filled
-//   radius 2 (5×5): 45%+ of the board filled (massive, near-draw colonies only)
-function computeBiteRadius(cellCount, boardSize) {
+// Base bite radius from colony size as fraction of board.
+// Thresholds vary by biteScaling setting.
+const BITE_THRESHOLDS = {
+  off:    [Infinity, Infinity],  // never scales up
+  slow:   [0.30, 0.55],
+  medium: [0.20, 0.45],
+  fast:   [0.10, 0.25],
+};
+function computeBiteRadius(cellCount, boardSize, biteScaling) {
+  const [t1, t2] = BITE_THRESHOLDS[biteScaling] || BITE_THRESHOLDS.medium;
   const pct = cellCount / (boardSize * boardSize);
-  if (pct >= 0.45) return 2;
-  if (pct >= 0.20) return 1;
+  if (pct >= t2) return 2;
+  if (pct >= t1) return 1;
   return 0;
+}
+
+// Effective radius accounts for comeback bonus: when your colony is under
+// COMEBACK_THRESHOLD × the largest opponent, you get +1 radius (capped at 2).
+function effectiveBiteRadius(cellCount, boardSize, settings, allCounts, playerIdx) {
+  let r = computeBiteRadius(cellCount, boardSize, settings.biteScaling || DEFAULT_BITE_SCALING);
+  if (settings.comebackBonus) {
+    const maxOpponent = Math.max(0, ...allCounts.filter((_, i) => i !== playerIdx));
+    if (maxOpponent > 0 && cellCount < maxOpponent * COMEBACK_THRESHOLD) {
+      r = Math.min(2, r + 1);
+    }
+  }
+  return r;
 }
 
 // Award extra bites capped at BITE_MAX.
@@ -397,7 +428,7 @@ function newGame(settings, slots) {
   for (const h of heads) {
     board[h.y][h.x] = h.playerNum;
   }
-  const startBites = computeStartingBites(size);
+  const startBites = settings.startingBites != null ? settings.startingBites : computeStartingBites(size);
   return {
     size, offset, board,
     heads,
@@ -437,7 +468,15 @@ function validateSettings(raw) {
   if (!ELIM_FATES.includes(elimFate)) elimFate = DEFAULT_ELIM_FATE;
   let winCondition = String(raw.winCondition || "");
   if (!WIN_CONDITIONS.includes(winCondition)) winCondition = DEFAULT_WIN_CONDITION;
-  return { size, offset, elimFate, winCondition, lookahead: DEFAULT_LOOKAHEAD };
+  let biteScaling = String(raw.biteScaling || "");
+  if (!BITE_SCALINGS.includes(biteScaling)) biteScaling = DEFAULT_BITE_SCALING;
+  const headProtectRadius = clampInt(raw.headProtectRadius, 0, 2, DEFAULT_HEAD_PROTECT);
+  const comebackBonus = raw.comebackBonus === "true" || raw.comebackBonus === true;
+  const startingBites = clampInt(raw.startingBites, 1, 6, STARTING_BITES);
+  return {
+    size, offset, elimFate, winCondition, lookahead: DEFAULT_LOOKAHEAD,
+    biteScaling, headProtectRadius, comebackBonus, startingBites,
+  };
 }
 
 function defaultSlots() {
@@ -485,10 +524,10 @@ function* enumeratePlacements(board, size, heads, playerNum, pieceType) {
   }
 }
 
-function* enumerateBites(board, size, heads, playerNum) {
+function* enumerateBites(board, size, heads, playerNum, headProtectRadius = 0) {
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      if (validateBite(board, x, y, playerNum, size, heads).ok) {
+      if (validateBite(board, x, y, playerNum, size, heads, headProtectRadius).ok) {
         yield { x, y };
       }
     }
@@ -539,13 +578,15 @@ function simulateBite(board, heads, size, playerNum, x, y, radius = 0) {
 // Easy bot: random legal placement, with a ~30% chance to use a strategic bite
 // if it would trigger an orphan cascade (killing extra enemy cells). This gives
 // even the easy bot a basic sense that biting matters.
-function pickEasyMove(game, playerIdx) {
+function pickEasyMove(game, playerIdx, settings) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
-  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size), game.size);
+  const allCounts = game.heads.map(h => h ? countCells(game.board, h.playerNum, game.size) : 0);
+  const biteRadius = effectiveBiteRadius(allCounts[playerIdx], game.size, settings, allCounts, playerIdx);
+  const hpr = settings.headProtectRadius || 0;
 
   if (game.bitesRemaining[playerIdx] > 0 && Math.random() < 0.30) {
-    const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum)];
+    const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum, hpr)];
     if (bites.length > 0) {
       // Prefer bites that cascade into orphan kills or cover a large area.
       const cascadeBites = bites.filter(b => {
@@ -574,10 +615,12 @@ function pickEasyMove(game, playerIdx) {
 // each cascaded orphan kill is worth 3.0 (removing them permanently is
 // much better than just flipping a cell), minus a small token-spending cost
 // that scales up when the bot is running low.
-function pickModerateMove(game, playerIdx) {
+function pickModerateMove(game, playerIdx, settings) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
-  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size), game.size);
+  const allCounts = game.heads.map(h => h ? countCells(game.board, h.playerNum, game.size) : 0);
+  const biteRadius = effectiveBiteRadius(allCounts[playerIdx], game.size, settings, allCounts, playerIdx);
+  const hpr = settings.headProtectRadius || 0;
   let best = null;
   const consider = (action, score) => {
     if (best === null || score > best.score) best = { score, action };
@@ -591,7 +634,7 @@ function pickModerateMove(game, playerIdx) {
     const h = cloneHeads(game.heads);
     const sim = simulatePlacement(b, h, game.size, playerNum, p.cells);
     const myHead = h.find(x => x && x.playerNum === playerNum);
-    if (myHead && isHeadCaptured(b, myHead, game.size)) continue; // suicidal
+    if (myHead && isHeadCaptured(b, myHead, game.size)) continue;
     const score = sim.myGain * 1.5 + sim.enemyLoss;
     consider(
       { type: "move", piece, x: p.x, y: p.y, rotation: p.rotation },
@@ -600,9 +643,8 @@ function pickModerateMove(game, playerIdx) {
   }
 
   if (game.bitesRemaining[playerIdx] > 0) {
-    // Cost rises when bites are scarce.
     const biteCost = game.bitesRemaining[playerIdx] <= 1 ? 2.5 : 0.8;
-    const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum)];
+    const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum, hpr)];
     for (const b of bites) {
       const bd = cloneBoard(game.board);
       const hd = cloneHeads(game.heads);
@@ -620,10 +662,12 @@ function pickModerateMove(game, playerIdx) {
 // Hard bot: 2-ply minimax with eval function.
 // Bites are evaluated with a penalty that shrinks when the cascade is large,
 // so the bot aggressively seeks high-cascade cuts rather than ignoring bites.
-function pickHardMove(game, playerIdx) {
+function pickHardMove(game, playerIdx, settings) {
   const playerNum = playerIdx + 1;
   const piece = game.nextPiece[playerIdx];
-  const biteRadius = computeBiteRadius(countCells(game.board, playerNum, game.size), game.size);
+  const allCounts = game.heads.map(h => h ? countCells(game.board, h.playerNum, game.size) : 0);
+  const biteRadius = effectiveBiteRadius(allCounts[playerIdx], game.size, settings, allCounts, playerIdx);
+  const hpr = settings.headProtectRadius || 0;
   const TOP_K = 8;
   const TOP_K_OPP = 4;
 
@@ -669,7 +713,7 @@ function pickHardMove(game, playerIdx) {
   }
 
   if (game.bitesRemaining[playerIdx] > 0) {
-    const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum)];
+    const bites = [...enumerateBites(game.board, game.size, game.heads, playerNum, hpr)];
     for (const b of bites) {
       const bd = cloneBoard(game.board);
       const hd = cloneHeads(game.heads);
@@ -720,10 +764,10 @@ function pickHardMove(game, playerIdx) {
   return bestAction || { type: "pass" };
 }
 
-function pickBotMove(game, playerIdx, difficulty) {
-  if (difficulty === "easy") return pickEasyMove(game, playerIdx);
-  if (difficulty === "moderate") return pickModerateMove(game, playerIdx);
-  if (difficulty === "hard") return pickHardMove(game, playerIdx);
+function pickBotMove(game, playerIdx, difficulty, settings) {
+  if (difficulty === "easy") return pickEasyMove(game, playerIdx, settings);
+  if (difficulty === "moderate") return pickModerateMove(game, playerIdx, settings);
+  if (difficulty === "hard") return pickHardMove(game, playerIdx, settings);
   return { type: "pass" };
 }
 
@@ -849,11 +893,17 @@ export class Room extends DurableObject {
       turnSlot: this.playerIdxToSlot(this.game.turn),
       nextPiece: this.game.nextPiece,
       bitesRemaining: this.game.bitesRemaining,
-      biteRadius: this.game.heads.map((h, i) =>
-        (h && !this.game.eliminated[i])
-          ? computeBiteRadius(countCells(this.game.board, h.playerNum, this.game.size), this.game.size)
-          : 0
-      ),
+      biteRadius: this.game.heads.map((h, i) => {
+        if (!h || this.game.eliminated[i]) return 0;
+        const allCounts = this.game.heads.map(hh => hh ? countCells(this.game.board, hh.playerNum, this.game.size) : 0);
+        return effectiveBiteRadius(allCounts[i], this.game.size, this.settings, allCounts, i);
+      }),
+      comebackActive: this.game.heads.map((h, i) => {
+        if (!h || this.game.eliminated[i] || !this.settings.comebackBonus) return false;
+        const allCounts = this.game.heads.map(hh => hh ? countCells(this.game.board, hh.playerNum, this.game.size) : 0);
+        const maxOpp = Math.max(0, ...allCounts.filter((_, j) => j !== i));
+        return maxOpp > 0 && allCounts[i] < maxOpp * COMEBACK_THRESHOLD;
+      }),
       snapshotCount: this.snapshots ? this.snapshots.length : 0,
       eliminated: this.game.eliminated,
       upcoming: myUpcoming,
@@ -1070,7 +1120,7 @@ export class Room extends DurableObject {
     const slot = this.slots[slotIdx];
     if (!slot || !BOT_TYPES.has(slot.type)) return;
     const playerIdx = this.game.turn;
-    const action = pickBotMove(this.game, playerIdx, slot.type);
+    const action = pickBotMove(this.game, playerIdx, slot.type, this.settings);
     let r;
     if (action.type === "move") r = this.handleMove(playerIdx, action);
     else if (action.type === "bite") r = this.handleBite(playerIdx, action);
@@ -1131,7 +1181,7 @@ export class Room extends DurableObject {
       cycle < g.heads.length &&
       !g.eliminated[g.turn] &&
       !hasLegalPlacement(g.board, g.size, g.heads, g.turn + 1, g.nextPiece[g.turn]) &&
-      !hasLegalBite(g.board, g.size, g.heads, g.turn + 1)
+      !hasLegalBite(g.board, g.size, g.heads, g.turn + 1, this.settings.headProtectRadius || 0)
     ) {
       g.moveLog.push({ player: g.turn, skipped: true });
       g.turn = this.nextLivingTurn(g.turn);
@@ -1272,12 +1322,14 @@ export class Room extends DurableObject {
     if (g.bitesRemaining[playerIdx] <= 0) return { error: "no bites remaining" };
     const playerNum = playerIdx + 1;
     const heads = g.heads.filter(h => h);
-    const v = validateBite(g.board, msg.x, msg.y, playerNum, g.size, heads);
+
+    const hpr = this.settings.headProtectRadius || 0;
+    const v = validateBite(g.board, msg.x, msg.y, playerNum, g.size, heads, hpr);
     if (!v.ok) return { error: v.reason };
 
-    // Bite area scales with colony size as a fraction of the board.
-    const cellCount = countCells(g.board, playerNum, g.size);
-    const radius = computeBiteRadius(cellCount, g.size);
+    // Bite radius uses effective radius (includes comeback bonus).
+    const allCounts = g.heads.map(h => h ? countCells(g.board, h.playerNum, g.size) : 0);
+    const radius = effectiveBiteRadius(allCounts[playerIdx], g.size, this.settings, allCounts, playerIdx);
     g.bitesRemaining[playerIdx]--;
 
     // Remove all enemy cells in the bite area.
