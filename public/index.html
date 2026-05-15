@@ -672,7 +672,7 @@ function connect(room, name, role, extra = {}) {
       if (wasNewGame) {
         anims = []; lastSeenEventId = null;
         replayFullLog = null;
-        viewingTurn = null; pendingReplayTurn = null;
+        viewingTurn = null; pendingReplayTurn = null; nodePlaceMode = false;
         // On first connect to an already-in-progress game, fetch existing snapshots.
         // For fresh games / rematches, start accumulating from an empty array.
         const firstConnect = !lastState;
@@ -961,7 +961,7 @@ function settingsHtml(s) {
   const winLabels = { last_standing: "last head standing", first_death: "first death ends", cell_count: "last standing / cell count" };
   const shieldLabels = { 0: "off", 1: "1-cell ring", 2: "2-cell ring" };
   const biteScaleLabels = { off: "off", slow: "slow", medium: "medium", fast: "fast" };
-  const nodeRegenLabels = { off: "off", slow: "slow", fast: "fast" };
+  const nodeRegenLabels = { off: "starting only", on: "earn by growing" };
   return (
     `<div class="row"><span>grid</span><strong>${s.size} × ${s.size}</strong></div>` +
     `<div class="row"><span>head spread</span><strong>${s.offset}</strong></div>` +
@@ -971,7 +971,7 @@ function settingsHtml(s) {
     `<div class="row"><span>bite scaling</span><strong>${biteScaleLabels[s.biteScaling] || s.biteScaling || "medium"}</strong></div>` +
     `<div class="row"><span>head shield</span><strong>${shieldLabels[s.headProtectRadius] ?? "1-cell ring"}</strong></div>` +
     `<div class="row"><span>comeback bonus</span><strong>${s.comebackBonus ? "on" : "off"}</strong></div>` +
-    (s.nodesEnabled ? `<div class="row"><span>necro nodes</span><strong>${s.startingNodes ?? 2} nodes (${s.nodeSize ?? 1}×${s.nodeSize ?? 1}), regen: ${nodeRegenLabels[s.nodeRegen] || "off"}</strong></div>` : "")
+    (s.nodesEnabled ? `<div class="row"><span>necro nodes</span><strong>${s.startingNodes ?? 1} starting (${s.nodeSize ?? 1}×${s.nodeSize ?? 1}), ${nodeRegenLabels[s.nodeRegen] || "starting only"}</strong></div>` : "")
   );
 }
 
@@ -1786,6 +1786,21 @@ function drawReplayHighlights(events) {
       ctx.strokeRect(x * CELL + 3, y * CELL + 3, CELL - 6, CELL - 6);
     }
     ctx.setLineDash([]);
+  } else if (events.kind === "place_node") {
+    if (events.nodeCells && events.nodeCells.length > 0) {
+      ctx.strokeStyle = "#cc0800"; ctx.lineWidth = 3; ctx.globalAlpha = 1;
+      ctx.shadowColor = "#ff0800"; ctx.shadowBlur = 8;
+      for (const [nx, ny] of events.nodeCells) {
+        ctx.strokeRect(nx * CELL + 1, ny * CELL + 1, CELL - 2, CELL - 2);
+      }
+      ctx.shadowBlur = 0;
+    }
+    ctx.strokeStyle = getCSS("--warn"); ctx.lineWidth = 1.5; ctx.globalAlpha = 0.65;
+    ctx.setLineDash([3, 3]);
+    for (const [x, y] of events.killed || []) {
+      ctx.strokeRect(x * CELL + 3, y * CELL + 3, CELL - 6, CELL - 6);
+    }
+    ctx.setLineDash([]);
   }
   ctx.globalAlpha = 1; ctx.restore();
 }
@@ -2070,7 +2085,10 @@ function updateLog() {
     else if (entry.passed) div.innerHTML = `${turnTag} · ${who} passed`;
     else if (entry.eliminated) div.innerHTML = `${turnTag} · ${who} <span style="color:var(--warn);">ELIMINATED</span>`;
     else if (entry.resigned) div.innerHTML = `${turnTag} · ${who} <span style="color:var(--warn);">RESIGNED</span>`;
-    else if (entry.bite) {
+    else if (entry.nodePlaced) {
+      const killText = entry.killed > 0 ? ` · <span class="flip">${entry.killed} killed</span>` : "";
+      div.innerHTML = `${turnTag} · ${who} <span style="color:#cc0800;letter-spacing:1px;">⬟ NODE</span> @ ${entry.x},${entry.y}${killText}`;
+    } else if (entry.bite) {
       const killText = entry.killed > 0 ? ` · <span class="flip">${entry.killed} killed</span>` : "";
       div.innerHTML = `${turnTag} · ${who} <span class="bite-tag">▼ BIT</span> @ ${entry.x},${entry.y}${killText}`;
     } else {
