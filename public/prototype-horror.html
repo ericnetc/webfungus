@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>WebFungus — Horror Prototypes</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0505; color: #a09070; font-family: monospace;
+  display: flex; flex-direction: column; align-items: center;
+  min-height: 100vh; padding: 28px; gap: 14px;
+}
+h1 { color: #8a3a1a; letter-spacing: 5px; font-size: 15px; text-shadow: 0 0 12px #4a0404; }
+p.sub { color: #3a2010; font-size: 10px; letter-spacing: 2px; }
+.row { display: flex; gap: 40px; align-items: flex-start; margin-top: 20px; }
+.card { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.label { font-size: 9px; letter-spacing: 3px; color: #4a2a18; text-transform: uppercase; }
+canvas { display: block; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>// HORROR PROTOTYPE — GEMINI DIRECTIVES</h1>
+<p class="sub">Click to pause · Palette: obsidian / dried blood / sickly parchment</p>
+
+<div class="row">
+  <div class="card">
+    <canvas id="headP1" width="360" height="360"></canvas>
+    <span class="label">HEAD — P1 (gold accent)</span>
+  </div>
+  <div class="card">
+    <canvas id="headP2" width="360" height="360"></canvas>
+    <span class="label">HEAD — P2 (green accent)</span>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card">
+    <canvas id="veilP1" width="340" height="340"></canvas>
+    <span class="label">THREAD VEIL — P1</span>
+  </div>
+  <div class="card">
+    <canvas id="veilP2" width="340" height="340"></canvas>
+    <span class="label">THREAD VEIL — P2</span>
+  </div>
+</div>
+
+<script>
+// ─── SEEDED HASH (consistent asymmetry, no Perfect Circles™) ─────────────────
+function hash(n) { const x = Math.sin(n + 1.0) * 43758.5453; return x - Math.floor(x); }
+function hash2(a, b) { return hash(a * 1000.7 + b * 0.137); }
+
+// ─── VALUE NOISE (1D, for organic drift) ─────────────────────────────────────
+function vnoise(x) {
+  const i = Math.floor(x);
+  const f = x - i;
+  const u = f * f * (3 - 2 * f); // smoothstep
+  return hash(i) * (1 - u) + hash(i + 1) * u;
+}
+
+// ─── PALETTE ──────────────────────────────────────────────────────────────────
+const PAL = {
+  bg:        "#0a0505",
+  base:      "#1a0f0f",
+  vein:      "#4a0404",
+  flesh:     "#3d1010",
+  parchment: "#d2b48c",
+  spore:     "#c8a878",
+  wet:       "#ffffff",
+};
+
+// ─── PARTICLE SYSTEMS (one per head canvas) ───────────────────────────────────
+function makeSpores(count) {
+  return Array.from({ length: count }, () => ({ x:0, y:0, vx:0, vy:0, a:0, r:0, dead:true }));
+}
+function spawnSpore(p, cx, cy, S) {
+  const angle = Math.random() * Math.PI * 2;
+  const dist  = (15 + Math.random() * 70) * S;
+  p.x  = cx + dist * Math.cos(angle);
+  p.y  = cy + dist * Math.sin(angle);
+  p.vx = (Math.random() - 0.5) * 0.25 * S;
+  p.vy = -(0.25 + Math.random() * 0.45) * S;
+  p.a  = 0.25 + Math.random() * 0.45;
+  p.r  = (0.8 + Math.random() * 1.8) * S;
+  p.dead = false;
+}
+function tickSpores(spores, cx, cy, S) {
+  for (const p of spores) {
+    if (p.dead) { if (Math.random() < 0.04) spawnSpore(p, cx, cy, S); continue; }
+    p.x += p.vx + (Math.random() - 0.5) * 0.12 * S;
+    p.y += p.vy;
+    p.a -= 0.003;
+    if (p.a <= 0) p.dead = true;
+  }
+}
+function drawSpores(ctx, spores, accentGlow) {
+  ctx.save();
+  for (const p of spores) {
+    if (p.dead || p.a <= 0) continue;
+    ctx.globalAlpha = p.a;
+    ctx.shadowColor = accentGlow; ctx.shadowBlur = 6;
+    ctx.fillStyle = PAL.spore;
+    ctx.beginPath();
+    // Distorted — not a circle
+    ctx.ellipse(p.x, p.y, p.r * (0.7 + hash(p.x) * 0.6), p.r * (0.9 + hash(p.y) * 0.4),
+      hash(p.x + p.y) * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// ─── FLICKER STATE ────────────────────────────────────────────────────────────
+let flickerBlur = 12;
+let flickerTarget = 12;
+
+// ─── TWITCH STATE ─────────────────────────────────────────────────────────────
+let twitchAngle = 0;
+let twitchDecay = 0;
+
+// ─── DISTORTION STATE (slow morph — avoid perfect circles) ───────────────────
+let dX = 1.0, dY = 1.0, tdX = 1.05, tdY = 0.97;
+
+// ─── JAGGED PATH HELPER ───────────────────────────────────────────────────────
+function jaggedLine(ctx, x1, y1, x2, y2, jitter, segs, seed) {
+  ctx.moveTo(x1, y1);
+  for (let i = 1; i < segs; i++) {
+    const tt = i / segs;
+    const mx = x1 + (x2-x1)*tt + (hash(seed + i*7.31)-0.5)*2*jitter;
+    const my = y1 + (y2-y1)*tt + (hash(seed + i*13.17)-0.5)*2*jitter;
+    ctx.lineTo(mx, my);
+  }
+  ctx.lineTo(x2, y2);
+}
+
+// ─── HEAD RENDERER ────────────────────────────────────────────────────────────
+function drawHead(canvas, t, spores, accentColor, accentGlow, seed) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const S = W / 360;
+  const cx = W / 2, cy = H / 2 - 5 * S;
+
+  ctx.fillStyle = PAL.bg; ctx.fillRect(0, 0, W, H);
+
+  // ── Global flicker update
+  flickerTarget = 10 + Math.random() * 30;
+  flickerBlur += (flickerTarget - flickerBlur) * 0.08;
+
+  // ── Twitch: rare spasm
+  if (Math.random() > 0.992) { twitchAngle = (Math.random() - 0.5) * 0.18; twitchDecay = 0.82; }
+  twitchAngle *= twitchDecay; twitchDecay *= 0.88;
+
+  // ── Distortion (no perfect circles)
+  if (Math.random() > 0.994) { tdX = 0.88 + Math.random() * 0.32; tdY = 0.88 + Math.random() * 0.32; }
+  dX += (tdX - dX) * 0.015; dY += (tdY - dY) * 0.015;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(twitchAngle);
+  ctx.translate(-cx, -cy);
+
+  // ── Vein pulse (radialGradient heartbeat) ─────────────────────────────────
+  const heartbeat = 0.5 + 0.5 * Math.abs(Math.sin(t * 0.0024));
+  const pulseR = (48 + heartbeat * 28) * S;
+  const veins = ctx.createRadialGradient(cx, cy, 4*S, cx, cy, pulseR);
+  veins.addColorStop(0,   `rgba(120,10,10,${0.4 + heartbeat * 0.35})`);
+  veins.addColorStop(0.4, `rgba(74,4,4,${0.25 + heartbeat * 0.2})`);
+  veins.addColorStop(1,   "rgba(26,15,15,0)");
+  ctx.save();
+  ctx.shadowColor = PAL.vein; ctx.shadowBlur = 20 * S * heartbeat;
+  ctx.beginPath(); ctx.arc(cx, cy, pulseR, 0, Math.PI*2);
+  ctx.fillStyle = veins; ctx.fill();
+  ctx.restore();
+
+  // ── Mycelium overgrowth — asymmetric strangling tendrils ─────────────────
+  ctx.save();
+  ctx.lineCap = "round";
+  const STRAND_COUNT = 26;
+  for (let i = 0; i < STRAND_COUNT; i++) {
+    // Randomized by seed — NOT evenly distributed
+    const baseA = hash2(seed, i) * Math.PI * 2;
+    const noiseDrift = 0.6 * (vnoise(t * 0.0004 + i * 0.37) - 0.5);
+    const angle = baseA + noiseDrift;
+    // Asymmetric length: some strands choke, others recede
+    const lenBase = (30 + hash2(seed+1, i) * 80) * S;
+    const lenPulse = lenBase * (0.7 + 0.3 * vnoise(t * 0.0006 + i * 0.9));
+    const rootR = (60 + hash2(seed+2, i) * 20) * S * dX;
+
+    // 3 overlapping bezier layers per strand — varying thickness/alpha
+    for (let layer = 0; layer < 3; layer++) {
+      const layerAlpha = [0.55, 0.28, 0.12][layer];
+      const layerW = ([1.8, 0.9, 0.4][layer]) * S;
+      const angleJitter = (hash2(seed+layer, i+33) - 0.5) * 0.25;
+      const a = angle + angleJitter;
+      const cp1Dist = lenPulse * (0.35 + hash2(seed+10, i+layer) * 0.2);
+      const cp1A = a + (hash2(seed+20, i+layer) - 0.5) * 0.7;
+      const cp2Dist = lenPulse * (0.65 + hash2(seed+30, i+layer) * 0.2);
+      const cp2A = a + (hash2(seed+40, i+layer) - 0.5) * 0.55;
+
+      // Color: mix between dried blood and player accent based on layer
+      const col = layer === 0
+        ? `rgba(${hexRGB(accentColor)},${layerAlpha * 0.6})`
+        : `rgba(74,4,4,${layerAlpha})`;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = layerW;
+      ctx.shadowColor = layer === 0 ? accentGlow : PAL.vein;
+      ctx.shadowBlur = layer === 0 ? 6*S : 2*S;
+      ctx.globalAlpha = 1;
+
+      const sx = cx + rootR * Math.cos(angle);
+      const sy = cy + rootR * Math.sin(angle) * dY;
+      const ex = cx + (rootR + lenPulse) * Math.cos(a);
+      const ey = cy + (rootR + lenPulse) * Math.sin(a) * dY;
+
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.bezierCurveTo(
+        cx + cp1Dist * Math.cos(cp1A), cy + cp1Dist * Math.sin(cp1A) * dY,
+        cx + cp2Dist * Math.cos(cp2A), cy + cp2Dist * Math.sin(cp2A) * dY,
+        ex, ey
+      );
+      ctx.stroke();
+    }
+    // Jagged sub-filaments branching off — twitching, decayed
+    if (hash2(seed+50, i) > 0.55) {
+      const branchBase = (55 + hash2(seed+60, i) * 20) * S;
+      const branchOff = hash2(seed+70, i) * 0.8 - 0.4;
+      for (let jj = 0; jj < 2; jj++) {
+        const jAlpha = 0.18 + hash2(seed+80+jj, i) * 0.18;
+        ctx.strokeStyle = `rgba(74,4,4,${jAlpha})`;
+        ctx.lineWidth = 0.5 * S;
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+        ctx.beginPath();
+        const bAngle = angle + branchOff + jj * 0.3;
+        jaggedLine(ctx,
+          cx + branchBase * Math.cos(angle), cy + branchBase * Math.sin(angle) * dY,
+          cx + (branchBase + 30*S) * Math.cos(bAngle), cy + (branchBase + 30*S) * Math.sin(bAngle) * dY,
+          4*S, 5, seed * 100 + i * 13 + jj * 7
+        );
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // ── Body mass — layered, distorted, NO perfect circles ────────────────────
+  ctx.save();
+  const BODY_LAYERS = 5;
+  for (let bl = BODY_LAYERS; bl >= 1; bl--) {
+    const baseR = (40 + bl * 12) * S;
+    const pts = 28 + bl * 2;
+    ctx.shadowColor = bl === 1 ? accentGlow : PAL.vein;
+    ctx.shadowBlur = bl === 1 ? flickerBlur * S : 6 * S;
+    // Each layer: darker flesh, slight glow on innermost
+    const darkness = bl / BODY_LAYERS;
+    const r2 = Math.round(30 + darkness * 40);
+    const g2 = Math.round(5 + darkness * 8);
+    const b2 = Math.round(5 + darkness * 8);
+    ctx.fillStyle = `rgb(${r2},${g2},${b2})`;
+    ctx.beginPath();
+    for (let s = 0; s < pts; s++) {
+      const a = (s / pts) * Math.PI * 2;
+      // Asymmetric distortion seeded per layer
+      const asymX = 1.0 + (hash2(bl * 100, s) - 0.5) * 0.25;
+      const asymY = 1.0 + (hash2(bl * 200, s) - 0.5) * 0.25;
+      const noiseR = baseR
+        + 5 * S * (vnoise(t * 0.0008 * bl + s * 0.4 + bl) - 0.5) * 2
+        + 3 * S * (hash2(seed + bl * 37, s) - 0.5) * Math.sin(t * 0.0015 + s);
+      const px = cx + noiseR * dX * asymX * Math.cos(a);
+      const py = cy + noiseR * dY * asymY * Math.sin(a);
+      s === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+    // Muscle ridges on top layers
+    if (bl >= 3) {
+      ctx.strokeStyle = `rgba(${r2+20},${g2},${b2},0.3)`;
+      ctx.lineWidth = 1.2 * S; ctx.shadowBlur = 0;
+      for (let ridge = -2; ridge <= 2; ridge++) {
+        ctx.beginPath();
+        ctx.moveTo(cx + ridge * 16 * S, cy - baseR * 0.9);
+        ctx.bezierCurveTo(
+          cx + ridge * 14 * S, cy - baseR * 0.4,
+          cx + ridge * 14 * S, cy - baseR * 0.1,
+          cx + ridge * 15 * S, cy - 18 * S
+        );
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
+
+  // ── Independent left/right jaw hinges ─────────────────────────────────────
+  // Left hinge: slower, chewing phase offset
+  const leftPhase  = Math.abs(Math.sin(t * 0.0019));
+  const rightPhase = Math.abs(Math.sin(t * 0.0019 + 0.38)); // slightly offset
+  const snapLeft   = Math.pow(Math.max(0, Math.sin(t * 0.00061)), 16);
+  const snapRight  = Math.pow(Math.max(0, Math.sin(t * 0.00061 + 0.2)), 16);
+  const gapeL = (18 + leftPhase  * 32 + snapLeft  * 60) * S;
+  const gapeR = (18 + rightPhase * 32 + snapRight * 60) * S;
+  const jawMidY = cy + 8 * S;
+  const hingeL = cx - 38 * S, hingeR = cx + 38 * S;
+
+  // ── Upper jaw — two plates meeting at hinges ───────────────────────────────
+  ctx.save();
+  // Plate 1 (deep layer)
+  ctx.shadowColor = "#0a0000"; ctx.shadowBlur = 10 * S;
+  ctx.fillStyle = "#2a0808";
+  ctx.beginPath();
+  ctx.moveTo(hingeL, jawMidY - gapeL);
+  ctx.bezierCurveTo(
+    cx - 20*S, jawMidY - gapeL - 50*S * dY,
+    cx + 20*S, jawMidY - gapeR - 50*S * dY,
+    hingeR, jawMidY - gapeR
+  );
+  ctx.bezierCurveTo(cx + 30*S, jawMidY - gapeR + 16*S, cx - 30*S, jawMidY - gapeL + 16*S, hingeL, jawMidY - gapeL);
+  ctx.closePath(); ctx.fill();
+  // Plate 2 (calcified surface — sickle curve)
+  ctx.shadowColor = PAL.vein; ctx.shadowBlur = 6*S;
+  ctx.fillStyle = "#3d0d10";
+  ctx.beginPath();
+  ctx.moveTo(hingeL, jawMidY - gapeL + 4*S);
+  ctx.quadraticCurveTo(cx, jawMidY - Math.max(gapeL,gapeR) - 40*S * dY, hingeR, jawMidY - gapeR + 4*S);
+  ctx.quadraticCurveTo(cx, jawMidY - Math.max(gapeL,gapeR) - 18*S * dY, hingeL, jawMidY - gapeL + 4*S);
+  ctx.closePath(); ctx.fill();
+  // Plate 3 — varying thickness rim (calcified fungal buildup)
+  ctx.strokeStyle = PAL.vein; ctx.lineCap = "round";
+  for (let seg = 0; seg < 8; seg++) {
+    const tt = seg / 7;
+    const px1 = hingeL + (hingeR - hingeL) * tt;
+    const py1 = jawMidY - (gapeL + (gapeR-gapeL)*tt) + 8*S;
+    const thk = (3 + 5 * hash2(seed, seg + 100)) * S;
+    ctx.lineWidth = thk;
+    ctx.shadowBlur = thk * 1.5;
+    ctx.globalAlpha = 0.5 + hash2(seed+1,seg+100)*0.4;
+    if (seg < 7) {
+      const tt2 = (seg+1)/7;
+      const px2 = hingeL + (hingeR-hingeL)*tt2;
+      const py2 = jawMidY - (gapeL+(gapeR-gapeL)*tt2) + 8*S;
+      ctx.beginPath(); ctx.moveTo(px1,py1); ctx.lineTo(px2,py2); ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // ── Upper teeth ───────────────────────────────────────────────────────────
+  const uTeeth = [
+    {ox:-60,w:5,h:20},{ox:-46,w:8,h:30},{ox:-30,w:10,h:40},{ox:-13,w:11,h:46},
+    {ox:3,w:12,h:50},{ox:18,w:10,h:43},{ox:32,w:9,h:34},{ox:46,w:7,h:26},{ox:58,w:4,h:18}
+  ];
+  ctx.save();
+  for (const [idx, tooth] of uTeeth.entries()) {
+    const tx = cx + tooth.ox * S;
+    const ty = jawMidY - ((idx < 4 ? gapeL : gapeR)) + 10*S;
+    const tw = tooth.w * S * (0.85 + hash2(seed+idx,200) * 0.3); // asymmetric width
+    const th = tooth.h * S * (0.85 + hash2(seed+idx,300) * 0.3); // asymmetric height
+    const lean = (hash2(seed+idx,400)-0.5)*0.15;
+    ctx.shadowColor = "rgba(210,180,140,0.2)"; ctx.shadowBlur = 3*S;
+    const tg = ctx.createLinearGradient(tx, ty, tx+lean*th, ty+th);
+    tg.addColorStop(0,"#9a8040"); tg.addColorStop(0.4,"#c8aa60");
+    tg.addColorStop(0.8,"#e0d090"); tg.addColorStop(1,PAL.parchment);
+    ctx.fillStyle = tg;
+    ctx.beginPath();
+    ctx.moveTo(tx-tw, ty);
+    ctx.lineTo(tx+tw, ty);
+    ctx.lineTo(tx+tw*0.3+lean*th, ty+th);
+    ctx.lineTo(tx-tw*0.3+lean*th, ty+th);
+    ctx.closePath(); ctx.fill();
+    // Wetness highlight at tip
+    ctx.strokeStyle = PAL.wet; ctx.lineWidth = 0.8*S; ctx.globalAlpha = 0.45; ctx.shadowBlur = 0;
+    ctx.beginPath(); ctx.moveTo(tx-tw*0.15+lean*th, ty+th-2*S); ctx.lineTo(tx+lean*th, ty+th); ctx.stroke();
+    // Crack
+    ctx.strokeStyle="rgba(60,30,10,0.4)"; ctx.lineWidth=0.7*S; ctx.globalAlpha=1;
+    ctx.beginPath(); ctx.moveTo(tx+lean*th*0.35, ty+th*0.2); ctx.lineTo(tx+lean*th*0.6, ty+th*0.75); ctx.stroke();
+  }
+  ctx.restore();
+
+  // ── Lower jaw — independent sickle plates ─────────────────────────────────
+  ctx.save();
+  ctx.shadowColor = "#0a0000"; ctx.shadowBlur = 10*S;
+  ctx.fillStyle = "#240608";
+  ctx.beginPath();
+  ctx.moveTo(hingeL, jawMidY + gapeL);
+  ctx.bezierCurveTo(
+    cx - 20*S, jawMidY + gapeL + 40*S * dY,
+    cx + 20*S, jawMidY + gapeR + 40*S * dY,
+    hingeR, jawMidY + gapeR
+  );
+  ctx.bezierCurveTo(cx+26*S, jawMidY+gapeR-12*S, cx-26*S, jawMidY+gapeL-12*S, hingeL, jawMidY+gapeL);
+  ctx.closePath(); ctx.fill();
+  ctx.shadowColor = PAL.vein; ctx.shadowBlur = 4*S;
+  ctx.fillStyle = "#320a0c";
+  ctx.beginPath();
+  ctx.moveTo(hingeL, jawMidY+gapeL-4*S);
+  ctx.quadraticCurveTo(cx, jawMidY+Math.max(gapeL,gapeR)+28*S*dY, hingeR, jawMidY+gapeR-4*S);
+  ctx.quadraticCurveTo(cx, jawMidY+Math.max(gapeL,gapeR)+10*S*dY, hingeL, jawMidY+gapeL-4*S);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  // ── Lower teeth ───────────────────────────────────────────────────────────
+  const lTeeth = [
+    {ox:-52,w:5,h:16},{ox:-38,w:8,h:26},{ox:-22,w:10,h:36},{ox:-6,w:11,h:42},
+    {ox:10,w:10,h:38},{ox:24,w:8,h:28},{ox:38,w:6,h:20},{ox:50,w:4,h:14}
+  ];
+  ctx.save();
+  for (const [idx, tooth] of lTeeth.entries()) {
+    const tx = cx + tooth.ox * S;
+    const ty = jawMidY + ((idx < 4 ? gapeL : gapeR)) - 10*S;
+    const tw = tooth.w * S * (0.85 + hash2(seed+idx,500)*0.3);
+    const th = tooth.h * S * (0.85 + hash2(seed+idx,600)*0.3);
+    const lean = (hash2(seed+idx,700)-0.5)*0.12;
+    ctx.shadowColor = "rgba(200,170,120,0.2)"; ctx.shadowBlur = 3*S;
+    const tg = ctx.createLinearGradient(tx, ty, tx+lean*th, ty-th);
+    tg.addColorStop(0,"#887030"); tg.addColorStop(0.4,"#b89050");
+    tg.addColorStop(0.8,"#d8c080"); tg.addColorStop(1,PAL.parchment);
+    ctx.fillStyle = tg;
+    ctx.beginPath();
+    ctx.moveTo(tx-tw, ty); ctx.lineTo(tx+tw, ty);
+    ctx.lineTo(tx+tw*0.3+lean*th, ty-th); ctx.lineTo(tx-tw*0.3+lean*th, ty-th);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle=PAL.wet; ctx.lineWidth=0.7*S; ctx.globalAlpha=0.4; ctx.shadowBlur=0;
+    ctx.beginPath(); ctx.moveTo(tx-tw*0.1+lean*th, ty-th+2*S); ctx.lineTo(tx+lean*th, ty-th); ctx.stroke();
+    ctx.strokeStyle="rgba(60,30,10,0.35)"; ctx.lineWidth=0.6*S; ctx.globalAlpha=1;
+    ctx.beginPath(); ctx.moveTo(tx+lean*th*0.3, ty-th*0.15); ctx.lineTo(tx+lean*th*0.6, ty-th*0.7); ctx.stroke();
+  }
+  ctx.restore();
+
+  // ── Throat glow ───────────────────────────────────────────────────────────
+  const avgGape = (gapeL + gapeR) / 2;
+  ctx.save();
+  const tg2 = ctx.createRadialGradient(cx, jawMidY+avgGape*0.15, 3*S, cx, jawMidY, avgGape+20*S);
+  tg2.addColorStop(0,`rgba(255,40,5,${0.7+heartbeat*0.25})`);
+  tg2.addColorStop(0.35,`rgba(140,10,0,${0.6+heartbeat*0.2})`);
+  tg2.addColorStop(0.7, "rgba(40,0,0,0.4)");
+  tg2.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.shadowColor="#ff1100"; ctx.shadowBlur=flickerBlur*1.4*S;
+  ctx.beginPath(); ctx.ellipse(cx, jawMidY, 68*S*dX, avgGape*0.85, 0, 0, Math.PI*2);
+  ctx.fillStyle=tg2; ctx.fill();
+  ctx.restore();
+
+  // ── Saliva strands (appear when gaping) ───────────────────────────────────
+  if (avgGape > 28*S) {
+    ctx.save(); ctx.lineCap="round";
+    for (let s=0; s<4; s++) {
+      const sx = cx+(-36+s*24)*S;
+      const reach = Math.min(1, (avgGape/S-28)/40);
+      ctx.strokeStyle=`rgba(180,100,80,${reach*0.45})`;
+      ctx.lineWidth=(1.4+0.5*Math.sin(t*0.007+s*1.8))*S;
+      ctx.shadowColor=`rgba(200,80,60,0.3)`; ctx.shadowBlur=4*S;
+      ctx.beginPath();
+      ctx.moveTo(sx, jawMidY-avgGape+16*S);
+      ctx.bezierCurveTo(
+        sx+4*S*Math.sin(t*0.007+s), jawMidY-6*S,
+        sx-3*S*Math.sin(t*0.007+s+1), jawMidY+6*S,
+        sx+2*S, jawMidY+avgGape-14*S
+      );
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ── Spore particles ───────────────────────────────────────────────────────
+  tickSpores(spores, cx, cy, S);
+  drawSpores(ctx, spores, accentGlow);
+
+  // ── Outer color ring ──────────────────────────────────────────────────────
+  ctx.save();
+  ctx.strokeStyle=`rgba(${hexRGB(accentColor)},0.18)`;
+  ctx.lineWidth=2.5*S; ctx.shadowColor=accentGlow; ctx.shadowBlur=flickerBlur*0.8*S;
+  ctx.beginPath(); ctx.arc(cx, cy, 84*S, 0, Math.PI*2); ctx.stroke();
+  ctx.restore();
+  ctx.restore(); // twitch transform
+}
+
+// ─── THREAD VEIL RENDERER ─────────────────────────────────────────────────────
+function drawVeil(canvas, t, accentColor, accentGlow, seedBase) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const S = W / 340;
+  ctx.fillStyle = PAL.bg; ctx.fillRect(0,0,W,H);
+
+  const CELL = 42 * S;
+  const ox = (W - 6*CELL) / 2, oy = (H - 6*CELL) / 2;
+  const colony = [
+    [1,1],[2,1],[3,1],[4,1],
+    [1,2],[2,2],[3,2],[4,2],[5,2],
+    [0,3],[1,3],[2,3],[3,3],[4,3],
+    [1,4],[2,4],[3,4],[2,5],
+  ];
+  const alive = new Set(colony.map(([x,y])=>`${x},${y}`));
+
+  // ── Ichor drip from exposed bottom edges ───────────────────────────────────
+  ctx.save(); ctx.lineCap="round";
+  for (const k of alive) {
+    const [gx,gy] = k.split(",").map(Number);
+    if (alive.has(`${gx},${gy+1}`)) continue;
+    const cx2 = ox+gx*CELL+CELL/2, cy2 = oy+gy*CELL+CELL/2;
+    const phase = ((t*0.0005 + hash2(gx,gy)*4.7)) % 1;
+    const drip = phase * CELL * 0.85;
+    const alp = phase < 0.6 ? phase/0.6 : (1-phase)/0.4;
+    ctx.strokeStyle=`rgba(74,4,4,${alp*0.7})`; ctx.lineWidth=(2.5*(1-phase*0.4))*S;
+    ctx.shadowColor=PAL.vein; ctx.shadowBlur=3*S;
+    ctx.beginPath();
+    jaggedLine(ctx, cx2+hash2(gx*3,gy)*6*S-3*S, cy2+CELL*0.22, cx2+(hash2(gx,gy*3)-0.5)*4*S, cy2+CELL*0.22+drip, 2*S, 4, gx*71+gy*37);
+    ctx.stroke();
+    if (drip>CELL*0.3) {
+      ctx.fillStyle=`rgba(90,4,4,${alp*0.65})`; ctx.shadowBlur=5*S;
+      ctx.beginPath(); ctx.ellipse(cx2+(hash2(gx,gy*3)-0.5)*4*S, cy2+CELL*0.22+drip, 3.5*S*phase, 4.5*S*phase, 0.3, 0, Math.PI*2); ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  // ── Threads: multi-layer, jagged, varying alpha (depth & decay) ───────────
+  ctx.save(); ctx.lineCap="round";
+  for (const k of alive) {
+    const [gx,gy] = k.split(",").map(Number);
+    const cx2 = ox+gx*CELL+CELL/2, cy2 = oy+gy*CELL+CELL/2;
+
+    for (const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]]) {
+      const isNeighbor = alive.has(`${gx+dx},${gy+dy}`);
+      const count = isNeighbor ? 16 : 6;
+      const maxLen = isNeighbor ? CELL*0.85 : CELL*0.52;
+
+      for (let i=0; i<count; i++) {
+        const seedT = seedBase + gx*127+gy*53+i*17+dx*300+dy*700;
+        // Asymmetric spread — not evenly distributed
+        const spread = (hash(seedT) - 0.5) * (isNeighbor ? 0.7 : 0.9);
+        const baseA = Math.atan2(dy,dx) + spread;
+
+        // Entropy: noise drift + occasional sharp jerk
+        const noiseDrift = 0.2*(vnoise(t*0.0004 + i*0.51 + gx*0.13) - 0.5);
+        const jerk = hash(seedT*1.7 + Math.floor(t*0.003)) > 0.93
+          ? (hash(seedT*2.3)-0.5)*0.35 : 0;
+        const angle = baseA + noiseDrift + jerk;
+
+        const lenFrac = 0.3 + 0.7 * vnoise(t*0.0005 + i*0.73 + gx*0.3 + gy*0.19);
+        const len = maxLen * lenFrac;
+
+        // "Dead" threads (grey, barely visible) — sense of decay
+        const isDead = hash(seedT*3.1) > 0.78;
+        const decayA = isDead ? 0.08 + hash(seedT*4.7)*0.1 : 0;
+        const liveA  = isDead ? 0 : (isNeighbor ? 0.18+hash(seedT)*0.38 : 0.08+hash(seedT)*0.15);
+
+        // 3 depth layers per live thread
+        const layers = isDead ? 1 : (isNeighbor ? 3 : 2);
+        for (let layer=0; layer<layers; layer++) {
+          const lAlpha = isDead ? decayA : [liveA, liveA*0.45, liveA*0.18][layer];
+          const lWidth = isDead ? 0.4*S : ([1.1, 0.55, 0.28][layer])*S;
+          const lJitter = isDead ? 8*S : ([3, 5, 7][layer])*S;
+          const segs = isDead ? 4 : [5, 7, 9][layer];
+          const lColor = isDead
+            ? `rgba(60,40,30,${lAlpha})`
+            : (layer===0 ? `rgba(${hexRGB(accentColor)},${lAlpha*0.55})` : `rgba(74,4,4,${lAlpha})`);
+
+          const startR = CELL*0.24;
+          const ex = cx2+len*Math.cos(angle), ey = cy2+len*Math.sin(angle);
+          const sx2b = cx2+startR*Math.cos(baseA), sy2b = cy2+startR*Math.sin(baseA);
+
+          ctx.strokeStyle=lColor; ctx.lineWidth=lWidth;
+          ctx.shadowColor = layer===0 && !isDead ? accentGlow : PAL.vein;
+          ctx.shadowBlur  = layer===0 && !isDead ? 4*S : 1*S;
+          ctx.beginPath();
+          jaggedLine(ctx, sx2b, sy2b, ex, ey, lJitter, segs, seedT+layer*1000);
+          ctx.stroke();
+
+          // Barb at tip (live threads only, every 4th)
+          if (!isDead && layer===0 && i%4===0 && len>maxLen*0.5) {
+            const hookA = angle+Math.PI*0.55;
+            const hookLen = (4+2*hash(seedT*5.1))*S;
+            ctx.strokeStyle=`rgba(${hexRGB(accentColor)},0.5)`;
+            ctx.lineWidth=0.8*S; ctx.shadowBlur=2*S;
+            ctx.beginPath(); ctx.moveTo(ex,ey);
+            ctx.lineTo(ex+hookLen*Math.cos(hookA), ey+hookLen*Math.sin(hookA));
+            ctx.stroke();
+          }
+          // Bulge node on thick threads
+          if (!isDead && layer===0 && i%5===0) {
+            const bf = 0.4+0.15*vnoise(t*0.001+i*0.3);
+            const nx3=sx2b+(ex-sx2b)*bf, ny3=sy2b+(ey-sy2b)*bf;
+            const nr=(2+hash(seedT*6.3))*S*(0.6+0.4*vnoise(t*0.003+i));
+            ctx.fillStyle=`rgba(${hexRGB(accentColor)},0.35)`;
+            ctx.shadowColor=accentGlow; ctx.shadowBlur=5*S;
+            ctx.beginPath();
+            ctx.ellipse(nx3, ny3, nr*(0.8+hash(nx3)*0.5), nr*(0.7+hash(ny3)*0.6), hash(seedT*7.1)*Math.PI, 0, Math.PI*2);
+            ctx.fill();
+          }
+        }
+      }
+    }
+  }
+  ctx.globalAlpha=1; ctx.shadowBlur=0;
+  ctx.restore();
+
+  // ── Cell bodies: eyeball nuclei, blood-veined sclera ──────────────────────
+  for (const k of alive) {
+    const [gx,gy] = k.split(",").map(Number);
+    const cx2=ox+gx*CELL+CELL/2, cy2=oy+gy*CELL+CELL/2;
+    const pulse = 0.78 + 0.22*Math.abs(Math.sin(t*0.0035+gx*1.1+gy*1.7));
+    // Asymmetric — not a circle
+    const rx = CELL*0.19*pulse*(0.85+hash2(gx,gy+100)*0.3);
+    const ry = CELL*0.19*pulse*(0.85+hash2(gx+100,gy)*0.3);
+    const tilt = hash2(gx*3,gy*7)*0.6-0.3;
+
+    ctx.save();
+    ctx.shadowColor=accentGlow; ctx.shadowBlur=CELL*0.28;
+    // Sclera — sickly yellowed
+    ctx.fillStyle="#c8a850";
+    ctx.beginPath(); ctx.ellipse(cx2,cy2,rx,ry,tilt,0,Math.PI*2); ctx.fill();
+    // Iris
+    ctx.shadowBlur=2*S;
+    ctx.fillStyle = PAL.vein;
+    ctx.beginPath(); ctx.ellipse(cx2,cy2,rx*0.58,ry*0.58,tilt,0,Math.PI*2); ctx.fill();
+    // Pupil — vertical slit or dilated depending on cell
+    ctx.fillStyle="#080202"; ctx.shadowBlur=0;
+    if ((gx+gy)%2===0) {
+      ctx.beginPath(); ctx.ellipse(cx2,cy2,rx*0.13,ry*0.48,tilt,0,Math.PI*2); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.ellipse(cx2,cy2,rx*0.32,ry*0.32,tilt,0,Math.PI*2); ctx.fill();
+    }
+    // Cornea specular
+    ctx.fillStyle="rgba(255,255,255,0.65)";
+    ctx.beginPath(); ctx.ellipse(cx2-rx*0.25,cy2-ry*0.28,rx*0.16,ry*0.12,tilt-0.2,0,Math.PI*2); ctx.fill();
+    // Blood vessels
+    ctx.strokeStyle=`rgba(120,15,15,0.45)`; ctx.lineWidth=0.5*S; ctx.lineCap="round";
+    for (let v=0;v<4;v++) {
+      const va=v*Math.PI*0.5+tilt+0.3*hash2(gx+v,gy+v);
+      ctx.beginPath(); ctx.moveTo(cx2+rx*0.5*Math.cos(va),cy2+ry*0.5*Math.sin(va));
+      ctx.lineTo(cx2+rx*0.9*Math.cos(va+0.2),cy2+ry*0.9*Math.sin(va+0.2)); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// ─── UTILS ────────────────────────────────────────────────────────────────────
+function hexRGB(hex) {
+  const h = hex.replace("#","");
+  return `${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)}`;
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+const sporesP1 = makeSpores(45);
+const sporesP2 = makeSpores(45);
+const paused = new Set();
+["headP1","headP2","veilP1","veilP2"].forEach(id=>{
+  document.getElementById(id).addEventListener("click",()=>{
+    if(paused.has(id)) paused.delete(id); else paused.add(id);
+  });
+});
+
+let T = 0;
+function loop() {
+  T = performance.now();
+  if (!paused.has("headP1")) drawHead(document.getElementById("headP1"), T, sporesP1, "#f4c430","#ffe066", 1.0);
+  if (!paused.has("headP2")) drawHead(document.getElementById("headP2"), T, sporesP2, "#7ed957","#b5ff8f", 99.0);
+  if (!paused.has("veilP1")) drawVeil(document.getElementById("veilP1"), T, "#f4c430","#ffe066", 1.0);
+  if (!paused.has("veilP2")) drawVeil(document.getElementById("veilP2"), T, "#7ed957","#b5ff8f", 500.0);
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
