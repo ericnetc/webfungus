@@ -653,11 +653,34 @@ function connect(room, name, role, extra = {}) {
       enterGame();
       if (wasNewGame) fitCanvas();
       if (msg.turn !== myPlayerIdx) biteMode = false;
-      // Pre-fetch snapshots the moment the game ends so VIEW REPLAY is instant.
-      if (msg.finished && !replaySnapshots && !pendingReplayTurn && !replayPrefetching) {
+
+      // Eagerly fetch snapshots as soon as the game has moves.
+      // This covers both mid-game (for log replay) and end-game (for VIEW REPLAY).
+      if (!replaySnapshots && !replayPrefetching && msg.moveLog && msg.moveLog.length > 0) {
         replayPrefetching = true;
         send({ type: "get_snapshots" });
       }
+
+      // After the initial fetch, keep replaySnapshots in sync by appending each new
+      // move's board state directly from the incoming state — no extra round-trip needed.
+      if (replaySnapshots && !wasNewGame && msg.lastEvents && msg.lastEvents.kind) {
+        const expectedLen = msg.snapshotCount || 0;
+        if (expectedLen > replaySnapshots.length) {
+          replaySnapshots.push({
+            board: msg.board ? msg.board.map(r => [...r]) : null,
+            heads: msg.heads ? msg.heads.map(h => h ? Object.assign({}, h) : null) : null,
+            eliminated: [...(msg.eliminated || [])],
+            counts: [...(msg.counts || [])],
+            lastEvents: msg.lastEvents,
+          });
+          // Keep replayFullLog in sync too.
+          if (replayFullLog && msg.moveLog && msg.moveLog.length > 0) {
+            const newest = msg.moveLog[msg.moveLog.length - 1];
+            if (newest && replayFullLog.length < expectedLen) replayFullLog.push(newest);
+          }
+        }
+      }
+
       render();
       return;
     }
@@ -974,8 +997,10 @@ function checkValidBite(x, y, playerNum, board, heads) {
   if (v === 0 || v === -1 || v === playerNum) return false;
   const hpr = (lastState && lastState.settings) ? (lastState.settings.headProtectRadius || 0) : 0;
   if (hpr > 0 && heads) {
+    const targetPlayerNum = v;
     for (const h of heads) {
-      if (h && Math.max(Math.abs(x - h.x), Math.abs(y - h.y)) <= hpr) return false;
+      if (h && h.playerNum === targetPlayerNum &&
+          Math.max(Math.abs(x - h.x), Math.abs(y - h.y)) <= hpr) return false;
     }
   }
   for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
@@ -1497,8 +1522,9 @@ function drawProtectionRings(heads) {
     if (!h) continue;
     const rx = (h.x - hpr) * CELL, ry = (h.y - hpr) * CELL;
     const rw = (1 + 2 * hpr) * CELL, rh = (1 + 2 * hpr) * CELL;
-    ctx.strokeStyle = getCSS("--neutral-glow");
-    ctx.globalAlpha = 0.35;
+    // Ring color matches the head's player — it only protects that player's own cells.
+    ctx.strokeStyle = colorFor(h.playerNum);
+    ctx.globalAlpha = 0.28;
     ctx.strokeRect(rx + 1, ry + 1, rw - 2, rh - 2);
   }
   ctx.setLineDash([]); ctx.globalAlpha = 1;

@@ -25,9 +25,9 @@ const MIN_OFFSET = 1, MAX_OFFSET = 8, DEFAULT_OFFSET = 6;
 const STARTING_BITES = 3;
 const BITE_MAX = 6;
 const BITE_CAPTURE_BONUS_THRESHOLD = 5;
-const BITE_CASCADE_THRESHOLD = 3;
+const BITE_CASCADE_THRESHOLD = 8;  // cascade kills needed for flat +1 bite
 const BITE_ELIM_BONUS = 2;
-const BITE_MILESTONE_DIVISOR = 1.5;
+const BITE_MILESTONE_DIVISOR = 5;  // 1 bite per (boardSize*5) cells grown
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
 const VALID_LOOKAHEAD = [0, 1, 3, 5];
@@ -126,11 +126,14 @@ function validateBite(board, x, y, playerNum, size, heads, headProtectRadius = 0
   if (v === 0 || v === -1 || v === playerNum) {
     return { ok: false, reason: "must bite an enemy cell" };
   }
-  // Head protection ring: no biting within N cells (Chebyshev) of any head.
+  // Head protection ring: a head shields only its OWN player's cells.
+  // Enemy cells that happen to be near your head are still biteable.
   if (headProtectRadius > 0) {
+    const targetPlayerNum = board[y][x];
     for (const h of heads) {
       if (!h) continue;
-      if (Math.max(Math.abs(x - h.x), Math.abs(y - h.y)) <= headProtectRadius) {
+      if (h.playerNum === targetPlayerNum &&
+          Math.max(Math.abs(x - h.x), Math.abs(y - h.y)) <= headProtectRadius) {
         return { ok: false, reason: "protected zone near head" };
       }
     }
@@ -1294,9 +1297,9 @@ export class Room extends DurableObject {
       if (parseInt(p, 10) !== playerNum) allConverted.push(...orphans[p]);
     }
 
-    // Proportional bite earning: 1 per 8 cells captured/converted.
+    // Proportional bite earning: 1 per 20 cells captured/converted.
     const totalCaptured = flipped.length + allConverted.length;
-    const bitesBonusFromCapture = Math.floor(totalCaptured / 8);
+    const bitesBonusFromCapture = Math.floor(totalCaptured / 20);
     let bitesBonusEarned = bitesBonusFromCapture;
     if (bitesBonusFromCapture > 0) awardBiteBonus(g, playerIdx, bitesBonusFromCapture);
     // Check colony-size milestones.
@@ -1363,9 +1366,9 @@ export class Room extends DurableObject {
     }
     const killedAll = [...removedCells, ...cascadeKilled];
 
-    // Bite bonus: 1 per 5 cascaded orphan kills, plus threshold bonus for large cascades.
+    // Bite bonus: 1 per 12 cascaded orphan kills, plus flat +1 for large cascades.
     let bitesBonusEarned = 0;
-    const cascadeBonus = Math.floor(cascadeKilled.length / 5);
+    const cascadeBonus = Math.floor(cascadeKilled.length / 12);
     if (cascadeBonus > 0) { awardBiteBonus(g, playerIdx, cascadeBonus); bitesBonusEarned += cascadeBonus; }
     if (killedAll.length >= BITE_CASCADE_THRESHOLD) { awardBiteBonus(g, playerIdx, 1); bitesBonusEarned++; }
     bitesBonusEarned += checkBiteMilestones(g, playerIdx);
