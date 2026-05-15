@@ -415,10 +415,11 @@
           <div class="field">
             <label>bite scaling</label>
             <select id="biteScalingSelect">
-              <option value="off">off (1×1 only)</option>
-              <option value="slow">slow (30 / 55%)</option>
-              <option value="medium" selected>medium (20 / 45%)</option>
-              <option value="fast">fast (10 / 25%)</option>
+              <option value="off">off (3×3 base, no growth)</option>
+              <option value="slow">slow (3×3 → 5×5 at 30%)</option>
+              <option value="medium" selected>medium (3×3 → 5×5/7×7)</option>
+              <option value="fast">fast (3×3 → up to 9×9)</option>
+              <option value="extreme">extreme (5×5 base → up to 11×11)</option>
             </select>
           </div>
           <div class="field">
@@ -585,11 +586,12 @@ let anims = [];
 let lastSeenEventId = null;
 let pulseAnim = null;
 let pendingSlots = null;
-let replaySnapshots = null;   // array of board snapshots, fetched on demand
-let replayFullLog = null;     // full moveLog from server, comes with snapshots
-let viewingTurn = null;       // index into replaySnapshots, null = live
+let replaySnapshots = null;    // array of board snapshots, fetched on demand
+let replayFullLog = null;      // full moveLog from server, comes with snapshots
+let viewingTurn = null;        // index into replaySnapshots, null = live
 let replayReturnMode = "live"; // "live" | "results"
-let pendingReplayTurn = null;  // set while awaiting snapshot fetch
+let pendingReplayTurn = null;  // set while awaiting snapshot fetch (user-requested)
+let replayPrefetching = false; // true while pre-fetching snapshots at game-end
 
 function makeCode() {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -643,7 +645,7 @@ function connect(room, name, role, extra = {}) {
       if (wasNewGame) {
         anims = []; lastSeenEventId = null;
         replaySnapshots = null; replayFullLog = null;
-        viewingTurn = null; pendingReplayTurn = null;
+        viewingTurn = null; pendingReplayTurn = null; replayPrefetching = false;
       }
       ingestEvents(msg);
       lastState = msg;
@@ -651,10 +653,16 @@ function connect(room, name, role, extra = {}) {
       enterGame();
       if (wasNewGame) fitCanvas();
       if (msg.turn !== myPlayerIdx) biteMode = false;
+      // Pre-fetch snapshots the moment the game ends so VIEW REPLAY is instant.
+      if (msg.finished && !replaySnapshots && !pendingReplayTurn && !replayPrefetching) {
+        replayPrefetching = true;
+        send({ type: "get_snapshots" });
+      }
       render();
       return;
     }
     if (msg.type === "snapshots") {
+      replayPrefetching = false;
       replaySnapshots = msg.data || [];
       replayFullLog = msg.fullLog || [];
       if (pendingReplayTurn !== null) {
@@ -1238,6 +1246,9 @@ function render() {
     }
   }
 
+  // Replay event highlights (placed / flipped / killed cells)
+  if (isReplay && snap && snap.lastEvents) drawReplayHighlights(snap.lastEvents);
+
   // Hover preview (disabled in replay mode)
   if (!isReplay && !finished && turn === myPlayerIdx && hover.x >= 0) {
     if (biteMode) {
@@ -1494,6 +1505,47 @@ function drawProtectionRings(heads) {
   ctx.restore();
 }
 
+function drawReplayHighlights(events) {
+  if (!events || !events.kind) return;
+  ctx.save();
+  ctx.setLineDash([]);
+  if (events.kind === "place") {
+    const color = colorFor(events.player + 1);
+    const glow  = glowFor(events.player + 1);
+    // Placed cells: solid bright border
+    ctx.strokeStyle = glow; ctx.lineWidth = 2.5; ctx.globalAlpha = 1;
+    for (const [x, y] of events.placed || []) {
+      ctx.shadowColor = glow; ctx.shadowBlur = 6;
+      ctx.strokeRect(x * CELL + 2, y * CELL + 2, CELL - 4, CELL - 4);
+    }
+    ctx.shadowBlur = 0;
+    // Flipped / converted cells: dashed border
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.7;
+    ctx.setLineDash([3, 3]);
+    for (const [x, y] of [...(events.flipped || []), ...(events.converted || [])]) {
+      ctx.strokeRect(x * CELL + 3, y * CELL + 3, CELL - 6, CELL - 6);
+    }
+    ctx.setLineDash([]);
+  } else if (events.kind === "bite") {
+    // Bite target: bright red solid
+    if (events.bitten) {
+      const [bx, by] = events.bitten;
+      ctx.strokeStyle = getCSS("--warn-glow"); ctx.lineWidth = 3; ctx.globalAlpha = 1;
+      ctx.shadowColor = getCSS("--warn"); ctx.shadowBlur = 8;
+      ctx.strokeRect(bx * CELL + 1, by * CELL + 1, CELL - 2, CELL - 2);
+      ctx.shadowBlur = 0;
+    }
+    // Cascade-killed cells: dashed red
+    ctx.strokeStyle = getCSS("--warn"); ctx.lineWidth = 1.5; ctx.globalAlpha = 0.65;
+    ctx.setLineDash([3, 3]);
+    for (const [x, y] of events.killed || []) {
+      ctx.strokeRect(x * CELL + 3, y * CELL + 3, CELL - 6, CELL - 6);
+    }
+    ctx.setLineDash([]);
+  }
+  ctx.globalAlpha = 1; ctx.restore();
+}
+
 function drawBitePreview(x, y) {
   if (!lastState) return;
   if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return;
@@ -1615,8 +1667,9 @@ function updateSidebar() {
     const isComeback = (lastState.comebackActive || [])[myPlayerIdx];
     pieceLabel.textContent = isComeback ? "COMEBACK BITE" : "BITE MODE";
     pieceLabel.style.color = isComeback ? "var(--p3)" : "var(--warn)";
-    const biteRadius = (lastState.biteRadius || [])[myPlayerIdx] || 0;
-    const areaLabel = biteRadius === 0 ? "1×1" : biteRadius === 1 ? "3×3" : "5×5";
+    const biteRadius = (lastState.biteRadius || [])[myPlayerIdx] || 1;
+    const dim = biteRadius * 2 + 1;
+    const areaLabel = `${dim}×${dim}`;
     const hw = 12 + biteRadius * 12, hh = 12 + biteRadius * 12;
     svg.innerHTML = `
       <g transform="translate(65, 38)">
@@ -1626,7 +1679,7 @@ function updateSidebar() {
         <line x1="6" y1="-6" x2="-6" y2="6" stroke="var(--warn)" stroke-width="2"/>
         <text x="0" y="${hh + 11}" text-anchor="middle" fill="var(--warn)" font-size="9" letter-spacing="2">${areaLabel} AREA</text>
       </g>`;
-    pieceHint.innerHTML = `Click enemy cell adjacent to your colony.<br/>Destroys all enemies in ${areaLabel} area.<br/>Orphaned enemies die. <kbd>ESC</kbd> cancel.`;
+    pieceHint.innerHTML = `Click enemy cell adjacent to your colony.<br/>Destroys all enemies in ${areaLabel} area (r=${biteRadius}).<br/>Orphaned enemies die. <kbd>ESC</kbd> cancel.`;
   } else if (myPiece) {
     pieceLabel.textContent = "CURRENT";
     pieceLabel.style.color = "var(--text-dim)";
