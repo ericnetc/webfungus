@@ -451,6 +451,42 @@
             </select>
           </div>
         </div>
+        <div class="field">
+          <label>necro nodes</label>
+          <select id="nodesEnabledSelect">
+            <option value="false" selected>disabled</option>
+            <option value="true">enabled</option>
+          </select>
+        </div>
+        <div id="nodeOptions" class="hidden">
+          <div class="field-row">
+            <div class="field">
+              <label>starting nodes</label>
+              <select id="startingNodesSelect">
+                <option value="1">1 node</option>
+                <option value="2" selected>2 nodes</option>
+                <option value="3">3 nodes</option>
+                <option value="4">4 nodes</option>
+                <option value="5">5 nodes</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>node size</label>
+              <select id="nodeSizeSelect">
+                <option value="1" selected>1×1 cell</option>
+                <option value="2">2×2 cluster</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label>node regeneration</label>
+            <select id="nodeRegenSelect">
+              <option value="off" selected>off</option>
+              <option value="slow">slow (every 20 moves)</option>
+              <option value="fast">fast (every 10 moves)</option>
+            </select>
+          </div>
+        </div>
         <button class="act" id="createBtn">Create New Colony</button>
       </div>
       <div class="or-divider">or</div>
@@ -644,8 +680,19 @@ function connect(room, name, role, extra = {}) {
         (lastState.moveLog && msg.moveLog && msg.moveLog.length < lastState.moveLog.length);
       if (wasNewGame) {
         anims = []; lastSeenEventId = null;
-        replaySnapshots = null; replayFullLog = null;
-        viewingTurn = null; pendingReplayTurn = null; replayPrefetching = false;
+        replayFullLog = null;
+        viewingTurn = null; pendingReplayTurn = null;
+        // On first connect to an already-in-progress game, fetch existing snapshots.
+        // For fresh games / rematches, start accumulating from an empty array.
+        const firstConnect = !lastState;
+        if (firstConnect && (msg.snapshotCount || 0) > 0) {
+          replaySnapshots = null;
+          replayPrefetching = true;
+          send({ type: "get_snapshots" });
+        } else {
+          replaySnapshots = [];
+          replayPrefetching = false;
+        }
       }
       ingestEvents(msg);
       lastState = msg;
@@ -654,18 +701,11 @@ function connect(room, name, role, extra = {}) {
       if (wasNewGame) fitCanvas();
       if (msg.turn !== myPlayerIdx) biteMode = false;
 
-      // Eagerly fetch snapshots as soon as the game has moves.
-      // This covers both mid-game (for log replay) and end-game (for VIEW REPLAY).
-      if (!replaySnapshots && !replayPrefetching && msg.moveLog && msg.moveLog.length > 0) {
-        replayPrefetching = true;
-        send({ type: "get_snapshots" });
-      }
-
-      // After the initial fetch, keep replaySnapshots in sync by appending each new
-      // move's board state directly from the incoming state — no extra round-trip needed.
-      if (replaySnapshots && !wasNewGame && msg.lastEvents && msg.lastEvents.kind) {
+      // Real-time snapshot accumulation: append each move's board state directly.
+      // No server round-trip needed during live play.
+      if (replaySnapshots !== null && !wasNewGame && msg.lastEvents && msg.lastEvents.kind) {
         const expectedLen = msg.snapshotCount || 0;
-        if (expectedLen > replaySnapshots.length) {
+        if (replaySnapshots.length < expectedLen) {
           replaySnapshots.push({
             board: msg.board ? msg.board.map(r => [...r]) : null,
             heads: msg.heads ? msg.heads.map(h => h ? Object.assign({}, h) : null) : null,
@@ -673,11 +713,6 @@ function connect(room, name, role, extra = {}) {
             counts: [...(msg.counts || [])],
             lastEvents: msg.lastEvents,
           });
-          // Keep replayFullLog in sync too.
-          if (replayFullLog && msg.moveLog && msg.moveLog.length > 0) {
-            const newest = msg.moveLog[msg.moveLog.length - 1];
-            if (newest && replayFullLog.length < expectedLen) replayFullLog.push(newest);
-          }
         }
       }
 
@@ -727,6 +762,10 @@ document.getElementById("createBtn").onclick = () => {
     startingBites: document.getElementById("startingBitesSelect").value,
     headProtectRadius: document.getElementById("headProtectSelect").value,
     comebackBonus: document.getElementById("comebackBonusSelect").value,
+    nodesEnabled: document.getElementById("nodesEnabledSelect").value,
+    startingNodes: document.getElementById("startingNodesSelect").value,
+    nodeSize: document.getElementById("nodeSizeSelect").value,
+    nodeRegen: document.getElementById("nodeRegenSelect").value,
   };
   const code = makeCode();
   connect(code, name, "create", params);
@@ -747,6 +786,9 @@ document.getElementById("joinBtn").onclick = () => {
 document.getElementById("codeInput").addEventListener("input", (e) => {
   e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
 });
+document.getElementById("nodesEnabledSelect").addEventListener("change", (e) => {
+  document.getElementById("nodeOptions").classList.toggle("hidden", e.target.value !== "true");
+});
 
 document.getElementById("startBtn").onclick = () => {
   send({ type: "start_game" });
@@ -754,11 +796,14 @@ document.getElementById("startBtn").onclick = () => {
 // --- Replay + export ---
 function requestReplay(snapIdx, returnMode) {
   replayReturnMode = returnMode;
-  if (replaySnapshots) {
+  if (replaySnapshots !== null && snapIdx < replaySnapshots.length) {
     enterReplay(snapIdx, returnMode);
   } else {
     pendingReplayTurn = snapIdx;
-    send({ type: "get_snapshots" });
+    if (!replayPrefetching) {
+      replayPrefetching = true;
+      send({ type: "get_snapshots" });
+    }
   }
 }
 function enterReplay(snapIdx, returnMode) {
@@ -919,6 +964,7 @@ function settingsHtml(s) {
   const winLabels = { last_standing: "last head standing", first_death: "first death ends", cell_count: "last standing / cell count" };
   const shieldLabels = { 0: "off", 1: "1-cell ring", 2: "2-cell ring" };
   const biteScaleLabels = { off: "off", slow: "slow", medium: "medium", fast: "fast" };
+  const nodeRegenLabels = { off: "off", slow: "slow", fast: "fast" };
   return (
     `<div class="row"><span>grid</span><strong>${s.size} × ${s.size}</strong></div>` +
     `<div class="row"><span>head spread</span><strong>${s.offset}</strong></div>` +
@@ -927,7 +973,8 @@ function settingsHtml(s) {
     `<div class="row"><span>starting bites</span><strong>${s.startingBites ?? 3}</strong></div>` +
     `<div class="row"><span>bite scaling</span><strong>${biteScaleLabels[s.biteScaling] || s.biteScaling || "medium"}</strong></div>` +
     `<div class="row"><span>head shield</span><strong>${shieldLabels[s.headProtectRadius] ?? "1-cell ring"}</strong></div>` +
-    `<div class="row"><span>comeback bonus</span><strong>${s.comebackBonus ? "on" : "off"}</strong></div>`
+    `<div class="row"><span>comeback bonus</span><strong>${s.comebackBonus ? "on" : "off"}</strong></div>` +
+    (s.nodesEnabled ? `<div class="row"><span>necro nodes</span><strong>${s.startingNodes ?? 2} nodes (${s.nodeSize ?? 1}×${s.nodeSize ?? 1}), regen: ${nodeRegenLabels[s.nodeRegen] || "off"}</strong></div>` : "")
   );
 }
 
@@ -1094,12 +1141,20 @@ function simOrphans(board, heads, fate, convertTo) {
 function previewPlacement(cells, playerNum, board, heads) {
   const sim = board.map(row => row.slice());
   for (const [x, y] of cells) sim[y][x] = playerNum;
+  // Node kill preview: cells adjacent to node cells (-2) will die
+  const nodeKills = cells.filter(([x, y]) => {
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < boardSize && ny >= 0 && ny < boardSize && board[ny][nx] === -2) return true;
+    }
+    return false;
+  });
   const flipped = simCapture(sim, playerNum, heads);
   const convertTo = {};
   for (const h of heads) if (h) convertTo[h.playerNum] = playerNum;
   const orphans = simOrphans(sim, heads, "convert", convertTo);
   const converted = orphans.filter(o => o.owner !== playerNum).map(o => [o.x, o.y]);
-  return { flipped, converted };
+  return { flipped, converted, nodeKills };
 }
 function previewBite(x, y, playerNum, board, heads) {
   const radius = (lastState && lastState.biteRadius) ? (lastState.biteRadius[myPlayerIdx] || 0) : 0;
@@ -1131,6 +1186,11 @@ function ingestEvents(msg) {
   if (e.kind === "place") {
     for (const [x, y] of e.placed || []) {
       anims.push({ x, y, type: "place", startedAt: now, duration: 280, owner: moverNum });
+    }
+    let nk = 0;
+    for (const [x, y] of e.nodeKilled || []) {
+      anims.push({ x, y, type: "kill", startedAt: now + 100 + (nk * 12), duration: 420 });
+      nk++;
     }
     let i = 0;
     for (const [x, y] of e.flipped || []) {
@@ -1258,6 +1318,7 @@ function render() {
     for (let x = 0; x < boardSize; x++) {
       const v = board[y][x];
       if (v === 0) continue;
+      if (v === -2) { drawNode(x, y); continue; }
       if (heads && heads.some(h => h && h.x === x && h.y === y)) continue;
       if (suppressed.has(`${x},${y}`)) continue;
       drawCell(x, y, v);
@@ -1298,6 +1359,7 @@ function render() {
         const myColor = colorFor(myPlayerIdx + 1);
         for (const [x, y] of preview.flipped) drawCaptureOutline(x, y, myColor, "flip");
         for (const [x, y] of preview.converted) drawCaptureOutline(x, y, myColor, "convert");
+        for (const [x, y] of preview.nodeKills) drawDeathOutline(x, y);
       }
     }
   }
@@ -1502,6 +1564,34 @@ function drawHead(head, threatLevel) {
   ctx.restore();
 }
 
+function drawNode(x, y) {
+  const px = x * CELL, py = y * CELL;
+  const cx = px + CELL / 2, cy = py + CELL / 2;
+  const t = pulseT;
+  // Dark toxic fill
+  ctx.fillStyle = "#111a09";
+  ctx.fillRect(px + 1, py + 1, CELL - 2, CELL - 2);
+  // Pulsing toxic glow border
+  const pulse = 0.5 + 0.5 * Math.sin(t * 0.005 + x * 1.3 + y * 2.1);
+  ctx.strokeStyle = `rgba(60, 100, 20, ${0.55 + pulse * 0.3})`;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
+  // Inner X
+  ctx.strokeStyle = `rgba(80, 130, 25, ${0.45 + pulse * 0.25})`;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(px + 5, py + 5); ctx.lineTo(px + CELL - 5, py + CELL - 5);
+  ctx.moveTo(px + CELL - 5, py + 5); ctx.lineTo(px + 5, py + CELL - 5);
+  ctx.stroke();
+  // Toxic core orb
+  ctx.shadowColor = "#4a8010"; ctx.shadowBlur = CELL * 0.4 * pulse;
+  ctx.fillStyle = `rgba(55, 90, 15, ${0.7 + pulse * 0.2})`;
+  ctx.beginPath();
+  ctx.arc(cx, cy, CELL * (0.13 + 0.04 * pulse), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
 function drawCellGhost(x, y, color) {
   const px = x * CELL, py = y * CELL;
   ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = 0.95;
@@ -1552,6 +1642,15 @@ function drawReplayHighlights(events) {
       ctx.strokeRect(x * CELL + 3, y * CELL + 3, CELL - 6, CELL - 6);
     }
     ctx.setLineDash([]);
+    // Node-killed cells: red dashed (cells that died touching nodes)
+    if (events.nodeKilled && events.nodeKilled.length > 0) {
+      ctx.strokeStyle = getCSS("--warn"); ctx.lineWidth = 1.5; ctx.globalAlpha = 0.65;
+      ctx.setLineDash([3, 3]);
+      for (const [x, y] of events.nodeKilled) {
+        ctx.strokeRect(x * CELL + 3, y * CELL + 3, CELL - 6, CELL - 6);
+      }
+      ctx.setLineDash([]);
+    }
   } else if (events.kind === "bite") {
     // Bite target: bright red solid
     if (events.bitten) {
