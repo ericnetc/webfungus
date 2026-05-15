@@ -38,7 +38,7 @@ const ELIM_FATES = ["die", "convert", "neutral"];
 const DEFAULT_ELIM_FATE = "die";
 const WIN_CONDITIONS = ["last_standing", "first_death", "cell_count"];
 const DEFAULT_WIN_CONDITION = "last_standing";
-const BITE_SCALINGS = ["off", "slow", "medium", "fast"];
+const BITE_SCALINGS = ["off", "slow", "medium", "fast", "extreme"];
 const DEFAULT_BITE_SCALING = "medium";
 const DEFAULT_HEAD_PROTECT = 1;    // 1-cell ring on by default
 const DEFAULT_COMEBACK_BONUS = true;
@@ -341,30 +341,40 @@ function computeStartingBites(size) {
   // 8→3, 10→3, 12→3, 16→3, 20→4, 24→5
 }
 
-// Base bite radius from colony size as fraction of board.
-// Thresholds vary by biteScaling setting.
-const BITE_THRESHOLDS = {
-  off:    [Infinity, Infinity],  // never scales up
-  slow:   [0.30, 0.55],
-  medium: [0.20, 0.45],
-  fast:   [0.10, 0.25],
+// Bite radius: base radius + one step per coverage threshold crossed.
+// base = minimum radius regardless of colony size.
+// steps = [ pct_for_r+1, pct_for_r+2, ... ] where pct = cells / board^2.
+const BITE_PROFILE = {
+  off:     { base: 1, steps: [] },
+  slow:    { base: 1, steps: [0.30] },
+  medium:  { base: 1, steps: [0.20, 0.50] },
+  fast:    { base: 1, steps: [0.10, 0.30, 0.60] },
+  extreme: { base: 2, steps: [0.05, 0.20, 0.50] },
 };
 function computeBiteRadius(cellCount, boardSize, biteScaling) {
-  const [t1, t2] = BITE_THRESHOLDS[biteScaling] || BITE_THRESHOLDS.medium;
+  const prof = BITE_PROFILE[biteScaling] || BITE_PROFILE.medium;
   const pct = cellCount / (boardSize * boardSize);
-  if (pct >= t2) return 2;
-  if (pct >= t1) return 1;
-  return 0;
+  let r = prof.base;
+  for (const threshold of prof.steps) {
+    if (pct >= threshold) r++;
+    else break;
+  }
+  return r;
+}
+function maxBiteRadius(biteScaling) {
+  const prof = BITE_PROFILE[biteScaling] || BITE_PROFILE.medium;
+  return prof.base + prof.steps.length;
 }
 
 // Effective radius accounts for comeback bonus: when your colony is under
-// COMEBACK_THRESHOLD × the largest opponent, you get +1 radius (capped at 2).
+// COMEBACK_THRESHOLD × the largest opponent, you get +1 radius (capped at setting max).
 function effectiveBiteRadius(cellCount, boardSize, settings, allCounts, playerIdx) {
-  let r = computeBiteRadius(cellCount, boardSize, settings.biteScaling || DEFAULT_BITE_SCALING);
+  const scaling = settings.biteScaling || DEFAULT_BITE_SCALING;
+  let r = computeBiteRadius(cellCount, boardSize, scaling);
   if (settings.comebackBonus) {
     const maxOpponent = Math.max(0, ...allCounts.filter((_, i) => i !== playerIdx));
     if (maxOpponent > 0 && cellCount < maxOpponent * COMEBACK_THRESHOLD) {
-      r = Math.min(2, r + 1);
+      r = Math.min(maxBiteRadius(scaling), r + 1);
     }
   }
   return r;
