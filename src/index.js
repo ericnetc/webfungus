@@ -28,6 +28,13 @@ const BITE_CAPTURE_BONUS_THRESHOLD = 5;
 const BITE_CASCADE_THRESHOLD = 8;  // cascade kills needed for flat +1 bite
 const BITE_ELIM_BONUS = 2;
 const BITE_MILESTONE_DIVISOR = 5;  // 1 bite per (boardSize*5) cells grown
+// Necro nodes: inert obstacles that kill cells placed adjacent to them.
+const NODE_CELL_VALUE = -2;
+const DEFAULT_NODES_ENABLED = false;
+const DEFAULT_STARTING_NODES = 2;
+const DEFAULT_NODE_SIZE = 1;   // 1 = single cell, 2 = 2×2 cluster
+const DEFAULT_NODE_REGEN = "off";
+const NODE_REGEN_RATES = { slow: 20, fast: 10 }; // every N primary moves
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
 const VALID_LOOKAHEAD = [0, 1, 3, 5];
@@ -338,6 +345,54 @@ function countCellsNearHead(board, head, size) {
   return n;
 }
 
+// Place necro nodes on the board. Each node is a cluster of nodeSize×nodeSize cells.
+// Keeps a 2-cell buffer from any head position.
+function placeNodes(board, heads, size, count, nodeSize) {
+  const ns = Math.max(1, Math.min(2, nodeSize || 1));
+  for (let n = 0; n < count; n++) {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const x = Math.floor(Math.random() * (size - ns + 1));
+      const y = Math.floor(Math.random() * (size - ns + 1));
+      let ok = true;
+      for (let dy = -2; dy < ns + 2 && ok; dy++) {
+        for (let dx = -2; dx < ns + 2 && ok; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (!inBounds(nx, ny, size)) continue;
+          if (isHeadAt(heads, nx, ny)) ok = false;
+        }
+      }
+      for (let dy = 0; dy < ns && ok; dy++) {
+        for (let dx = 0; dx < ns && ok; dx++) {
+          if (board[y + dy][x + dx] !== 0) ok = false;
+        }
+      }
+      if (ok) {
+        for (let dy = 0; dy < ns; dy++)
+          for (let dx = 0; dx < ns; dx++)
+            board[y + dy][x + dx] = NODE_CELL_VALUE;
+        break;
+      }
+    }
+  }
+}
+
+// Kill any placed cells that are 4-adjacent to a node. Returns killed cell list.
+function applyNodeKills(board, placedCells, playerNum, size) {
+  const killed = [];
+  for (const [x, y] of placedCells) {
+    if (board[y][x] !== playerNum) continue;
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (inBounds(nx, ny, size) && board[ny][nx] === NODE_CELL_VALUE) {
+        board[y][x] = 0;
+        killed.push([x, y]);
+        break;
+      }
+    }
+  }
+  return killed;
+}
+
 // Bites scale with board size. Larger boards = more starting bites.
 function computeStartingBites(size) {
   return Math.max(STARTING_BITES, Math.round(size / 5));
@@ -442,6 +497,9 @@ function newGame(settings, slots) {
     board[h.y][h.x] = h.playerNum;
   }
   const startBites = settings.startingBites != null ? settings.startingBites : computeStartingBites(size);
+  if (settings.nodesEnabled && settings.startingNodes > 0) {
+    placeNodes(board, heads, size, settings.startingNodes, settings.nodeSize || 1);
+  }
   return {
     size, offset, board,
     heads,
@@ -455,6 +513,7 @@ function newGame(settings, slots) {
     consecutivePasses: 0,
     lastEvents: null,
     moveLog: [],
+    moveCount: 0,  // total primary moves made (for node regen)
     winner: null,
     finished: false,
     endReason: null,
@@ -486,9 +545,15 @@ function validateSettings(raw) {
   const headProtectRadius = clampInt(raw.headProtectRadius, 0, 2, DEFAULT_HEAD_PROTECT);
   const comebackBonus = raw.comebackBonus === "true" || raw.comebackBonus === true;
   const startingBites = clampInt(raw.startingBites, 1, 6, STARTING_BITES);
+  const nodesEnabled = raw.nodesEnabled === "true" || raw.nodesEnabled === true;
+  const startingNodes = clampInt(raw.startingNodes, 1, 5, DEFAULT_STARTING_NODES);
+  const nodeSize = clampInt(raw.nodeSize, 1, 2, DEFAULT_NODE_SIZE);
+  const nodeRegenRaw = String(raw.nodeRegen || "");
+  const nodeRegen = ["off","slow","fast"].includes(nodeRegenRaw) ? nodeRegenRaw : DEFAULT_NODE_REGEN;
   return {
     size, offset, elimFate, winCondition, lookahead: DEFAULT_LOOKAHEAD,
     biteScaling, headProtectRadius, comebackBonus, startingBites,
+    nodesEnabled, startingNodes, nodeSize, nodeRegen,
   };
 }
 
@@ -825,6 +890,14 @@ export class Room extends DurableObject {
             offset: url.searchParams.get("offset"),
             elimFate: url.searchParams.get("elimFate"),
             winCondition: url.searchParams.get("winCondition"),
+            biteScaling: url.searchParams.get("biteScaling"),
+            startingBites: url.searchParams.get("startingBites"),
+            headProtectRadius: url.searchParams.get("headProtectRadius"),
+            comebackBonus: url.searchParams.get("comebackBonus"),
+            nodesEnabled: url.searchParams.get("nodesEnabled"),
+            startingNodes: url.searchParams.get("startingNodes"),
+            nodeSize: url.searchParams.get("nodeSize"),
+            nodeRegen: url.searchParams.get("nodeRegen"),
           }),
         };
       }
@@ -1189,6 +1262,15 @@ export class Room extends DurableObject {
     g.turn = this.nextLivingTurn(g.turn);
     dealPiece(g, g.turn);
 
+    // Node regeneration: spawn a new node after every N primary moves.
+    g.moveCount = (g.moveCount || 0) + 1;
+    if (this.settings.nodesEnabled && this.settings.nodeRegen !== "off") {
+      const rate = NODE_REGEN_RATES[this.settings.nodeRegen] || 20;
+      if (g.moveCount % rate === 0) {
+        placeNodes(g.board, g.heads.filter(h => h), g.size, 1, this.settings.nodeSize || 1);
+      }
+    }
+
     let cycle = 0;
     while (
       cycle < g.heads.length &&
@@ -1288,6 +1370,10 @@ export class Room extends DurableObject {
     if (!v.ok) return { error: v.reason };
 
     for (const [x, y] of cells) g.board[y][x] = playerNum;
+    // Node kill zone: cells adjacent to necro nodes are destroyed immediately.
+    const nodeKilled = this.settings.nodesEnabled
+      ? applyNodeKills(g.board, cells, playerNum, g.size)
+      : [];
     const flipped = captureFlanked(g.board, playerNum, g.size, g.heads.filter(h => h));
     const convertTo = {};
     for (const h of g.heads) if (h) convertTo[h.playerNum] = playerNum;
@@ -1310,6 +1396,7 @@ export class Room extends DurableObject {
       kind: "place",
       player: playerIdx,
       placed: cells,
+      nodeKilled,
       flipped,
       converted: allConverted,
       bitesEarned: bitesBonusEarned,
