@@ -170,7 +170,7 @@ function captureFlanked(board, playerNum, size, heads) {
     const v = board[y][x];
     return v > 0 && v !== playerNum;
   };
-  const DIRS = [[0,-1],[0,1],[-1,0],[1,0]];
+  const DIRS = [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,1],[1,-1],[-1,1]];
   const allFlipped = [];
   while (true) {
     const toFlip = new Set();

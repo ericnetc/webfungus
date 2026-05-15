@@ -1076,7 +1076,7 @@ function simCapture(board, playerNum, heads) {
     const v = board[y][x];
     return v > 0 && v !== playerNum;
   };
-  const DIRS = [[0,-1],[0,1],[-1,0],[1,0]];
+  const DIRS = [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,1],[1,-1],[-1,1]];
   const flipped = [];
   while (true) {
     const toFlip = new Set();
