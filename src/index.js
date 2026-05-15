@@ -29,7 +29,11 @@ const BITE_CASCADE_THRESHOLD = 8;  // cascade kills needed for flat +1 bite
 const BITE_ELIM_BONUS = 2;
 const BITE_MILESTONE_DIVISOR = 5;  // 1 bite per (boardSize*5) cells grown
 // Necro nodes: player-placed obstacles that kill cells placed adjacent to them.
-const NODE_CELL_VALUE = -2;
+// Node ownership is encoded in the board value: -(playerNum + 1) per player.
+const NODE_CELL_VALUE = -2; // player 1 base; player 2 = -3, etc.
+function nodeValueForPlayer(playerNum) { return -(playerNum + 1); }
+function isNodeCell(v) { return v <= -2; }
+function nodeOwnerNum(v) { return -v - 1; } // returns playerNum (1-based)
 const DEFAULT_STARTING_NODES = 1;
 const DEFAULT_NODE_SIZE = 1;   // 1 = single cell, 2 = 2×2 cluster
 const DEFAULT_NODE_REGEN = "off";
@@ -345,10 +349,16 @@ function countCellsNearHead(board, head, size) {
   return n;
 }
 
-function validateNodePlacement(board, x, y, size, heads) {
+function validateNodePlacement(board, x, y, playerNum, size, heads) {
   if (!inBounds(x, y, size)) return { ok: false, reason: "out of bounds" };
   if (isHeadAt(heads, x, y)) return { ok: false, reason: "cannot place on a head" };
   if (board[y][x] !== 0) return { ok: false, reason: "cell occupied" };
+  const adj = [[1,0],[-1,0],[0,1],[0,-1]];
+  const hasAdj = adj.some(([dx, dy]) => {
+    const nx = x + dx, ny = y + dy;
+    return inBounds(nx, ny, size) && board[ny][nx] === playerNum;
+  });
+  if (!hasAdj) return { ok: false, reason: "must be adjacent to your colony" };
   return { ok: true };
 }
 
@@ -368,22 +378,28 @@ function checkNodeMilestones(game, playerIdx) {
   return 0;
 }
 
-function hasLegalNodePlacement(board, size, heads, nodesRemaining) {
+function hasLegalNodePlacement(board, size, heads, playerNum, nodesRemaining) {
   if (nodesRemaining <= 0) return false;
+  const adj = [[1,0],[-1,0],[0,1],[0,-1]];
   for (let y = 0; y < size; y++)
-    for (let x = 0; x < size; x++)
-      if (board[y][x] === 0 && !isHeadAt(heads, x, y)) return true;
+    for (let x = 0; x < size; x++) {
+      if (board[y][x] !== 0 || isHeadAt(heads, x, y)) continue;
+      if (adj.some(([dx, dy]) => {
+        const nx = x + dx, ny = y + dy;
+        return inBounds(nx, ny, size) && board[ny][nx] === playerNum;
+      })) return true;
+    }
   return false;
 }
 
-// Kill any placed cells that are 4-adjacent to a node. Returns killed cell list.
+// Kill any placed cells that are 4-adjacent to an ENEMY node. Returns killed cell list.
 function applyNodeKills(board, placedCells, playerNum, size) {
   const killed = [];
   for (const [x, y] of placedCells) {
     if (board[y][x] !== playerNum) continue;
     for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
       const nx = x + dx, ny = y + dy;
-      if (inBounds(nx, ny, size) && board[ny][nx] === NODE_CELL_VALUE) {
+      if (inBounds(nx, ny, size) && isNodeCell(board[ny][nx]) && nodeOwnerNum(board[ny][nx]) !== playerNum) {
         board[y][x] = 0;
         killed.push([x, y]);
         break;
@@ -1273,7 +1289,7 @@ export class Room extends DurableObject {
       !g.eliminated[g.turn] &&
       !hasLegalPlacement(g.board, g.size, g.heads, g.turn + 1, g.nextPiece[g.turn]) &&
       !hasLegalBite(g.board, g.size, g.heads, g.turn + 1, this.settings.headProtectRadius || 0) &&
-      !hasLegalNodePlacement(g.board, g.size, g.heads.filter(h => h), (g.nodesRemaining || [])[g.turn] || 0)
+      !hasLegalNodePlacement(g.board, g.size, g.heads.filter(h => h), g.turn + 1, (g.nodesRemaining || [])[g.turn] || 0)
     ) {
       g.moveLog.push({ player: g.turn, skipped: true });
       g.turn = this.nextLivingTurn(g.turn);
@@ -1487,19 +1503,20 @@ export class Room extends DurableObject {
     if (g.eliminated[playerIdx]) return { error: "you are eliminated" };
     if (!g.nodesRemaining || g.nodesRemaining[playerIdx] <= 0) return { error: "no nodes remaining" };
     const heads = g.heads.filter(h => h);
-    const v = validateNodePlacement(g.board, msg.x, msg.y, g.size, heads);
+    const playerNum = playerIdx + 1;
+    const v = validateNodePlacement(g.board, msg.x, msg.y, playerNum, g.size, heads);
     if (!v.ok) return { error: v.reason };
 
-    const playerNum = playerIdx + 1;
     const ns = this.settings.nodeSize || 1;
+    const nv = nodeValueForPlayer(playerNum);
 
-    // Place node cells (1×1 or 2×2 cluster)
+    // Place node cells (1×1 or 2×2 cluster), encoded with owner's value
     const nodeCells = [];
     for (let dy = 0; dy < ns; dy++) {
       for (let dx = 0; dx < ns; dx++) {
         const nx = msg.x + dx, ny = msg.y + dy;
         if (!inBounds(nx, ny, g.size) || g.board[ny][nx] !== 0 || isHeadAt(heads, nx, ny)) continue;
-        g.board[ny][nx] = NODE_CELL_VALUE;
+        g.board[ny][nx] = nv;
         nodeCells.push([nx, ny]);
       }
     }

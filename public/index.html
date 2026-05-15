@@ -1138,11 +1138,15 @@ function simOrphans(board, heads, fate, convertTo) {
 function previewPlacement(cells, playerNum, board, heads) {
   const sim = board.map(row => row.slice());
   for (const [x, y] of cells) sim[y][x] = playerNum;
-  // Node kill preview: cells adjacent to node cells (-2) will die
+  // Node kill preview: cells adjacent to ENEMY node cells will die
+  const myNodeVal = -(myPlayerIdx + 2); // node value for my own nodes
   const nodeKills = cells.filter(([x, y]) => {
     for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
       const nx = x + dx, ny = y + dy;
-      if (nx >= 0 && nx < boardSize && ny >= 0 && ny < boardSize && board[ny][nx] === -2) return true;
+      if (nx >= 0 && nx < boardSize && ny >= 0 && ny < boardSize) {
+        const nv = board[ny][nx];
+        if (nv <= -2 && nv !== myNodeVal) return true;
+      }
     }
     return false;
   });
@@ -1321,7 +1325,7 @@ function render() {
     for (let x = 0; x < boardSize; x++) {
       const v = board[y][x];
       if (v === 0) continue;
-      if (v === -2) { drawNode(x, y); continue; }
+      if (v <= -2) { drawNode(x, y, v); continue; }
       if (heads && heads.some(h => h && h.x === x && h.y === y)) continue;
       if (suppressed.has(`${x},${y}`)) continue;
       drawCell(x, y, v);
@@ -1569,7 +1573,7 @@ function drawHead(head, threatLevel) {
   ctx.restore();
 }
 
-function drawNode(x, y) {
+function drawNode(x, y, nodeV) {
   const px = x * CELL, py = y * CELL;
   const cx = px + CELL / 2, cy = py + CELL / 2;
   const t = pulseT;
@@ -1577,12 +1581,17 @@ function drawNode(x, y) {
   const pulse  = 0.5 + 0.5 * Math.sin(t * 0.008 + phase);
   const rage   = 0.5 + 0.5 * Math.sin(t * 0.013 + phase * 1.7);
 
+  // Derive owner's player color to tint the monster
+  const ownerNum = -nodeV - 1; // nodeValueForPlayer: -(playerNum+1) → playerNum = -nodeV-1
+  const pColor = colorFor(ownerNum) || "#f4c430";
+  const pGlow  = glowFor(ownerNum)  || "#ffe066";
+
   // Void core — nearly black with deep crimson tint
-  ctx.fillStyle = "#160100";
+  ctx.fillStyle = "#100005";
   ctx.fillRect(px + 1, py + 1, CELL - 2, CELL - 2);
 
-  // Pulsing blood-red aura
-  ctx.shadowColor = "#cc0800";
+  // Pulsing aura — crimson with a wash of player color
+  ctx.shadowColor = pGlow;
   ctx.shadowBlur = CELL * (0.55 + pulse * 1.1);
   ctx.fillStyle = `rgba(110, 0, 0, ${0.13 + rage * 0.17})`;
   ctx.fillRect(px, py, CELL, CELL);
@@ -1601,8 +1610,9 @@ function drawNode(x, y) {
     const grad = ctx.createLinearGradient(0, 0, Math.cos(a) * spikeLen, Math.sin(a) * spikeLen);
     grad.addColorStop(0,   `rgba(90, 0, 0, 0.55)`);
     grad.addColorStop(0.5, `rgba(195, 15, 5, 0.85)`);
-    grad.addColorStop(1,   `rgba(255, 55, 25, ${0.45 + pulse * 0.45})`);
-    ctx.shadowColor = "#ff0a00"; ctx.shadowBlur = CELL * 0.28;
+    // Tip bleeds into player color
+    grad.addColorStop(1,   `${pColor}${Math.round((0.45 + pulse * 0.45) * 255).toString(16).padStart(2,"0")}`);
+    ctx.shadowColor = pGlow; ctx.shadowBlur = CELL * 0.28;
     ctx.fillStyle = grad;
     ctx.save();
     ctx.rotate(a);
@@ -1618,7 +1628,7 @@ function drawNode(x, y) {
   ctx.restore();
   ctx.shadowBlur = 0;
 
-  // Thread-veil-style ichor tendrils — bezier curves, blood red
+  // Thread-veil-style ichor tendrils — player-tinted blood
   ctx.save();
   ctx.lineCap = "round";
   for (let d = 0; d < 6; d++) {
@@ -1634,14 +1644,15 @@ function drawNode(x, y) {
     const ey  = sy + len * Math.sin(angle) + len * 0.18;
     ctx.strokeStyle = `rgba(155, 8, 0, ${0.6 + rage * 0.32})`;
     ctx.lineWidth = CELL * 0.042;
-    ctx.shadowColor = "#ff1500"; ctx.shadowBlur = CELL * 0.14;
+    ctx.shadowColor = pGlow; ctx.shadowBlur = CELL * 0.14;
     ctx.globalAlpha = 0.82;
     ctx.beginPath();
     ctx.moveTo(sx, sy);
     ctx.quadraticCurveTo(cpx, cpy, ex, ey);
     ctx.stroke();
-    ctx.fillStyle = `rgba(175, 12, 0, ${0.72 + pulse * 0.22})`;
-    ctx.globalAlpha = 0.92;
+    // Tendril tips glow in player color
+    ctx.fillStyle = pColor;
+    ctx.globalAlpha = 0.55 + pulse * 0.3;
     ctx.shadowBlur = CELL * 0.08;
     ctx.beginPath();
     ctx.arc(ex, ey, CELL * 0.04 * (0.7 + 0.3 * rage), 0, Math.PI * 2);
@@ -1650,15 +1661,15 @@ function drawNode(x, y) {
   ctx.restore();
   ctx.shadowBlur = 0; ctx.globalAlpha = 1;
 
-  // Central lumpy bloody core
+  // Central lumpy core — dark crimson with player-colored highlight
   ctx.save();
-  ctx.shadowColor = "#ff0800"; ctx.shadowBlur = CELL * (0.38 + rage * 0.48);
+  ctx.shadowColor = pGlow; ctx.shadowBlur = CELL * (0.38 + rage * 0.48);
   const coreR = CELL * (0.19 + 0.045 * Math.sin(t * 0.009 + phase));
   const coreGrad = ctx.createRadialGradient(cx - CELL*0.05, cy - CELL*0.05, CELL*0.02, cx, cy, coreR);
-  coreGrad.addColorStop(0,   "#ffdddd");
-  coreGrad.addColorStop(0.2, "#ff2500");
-  coreGrad.addColorStop(0.6, "#830000");
-  coreGrad.addColorStop(1,   "#200000");
+  coreGrad.addColorStop(0,   pColor);        // inner gleam = player color
+  coreGrad.addColorStop(0.25, "#cc1500");
+  coreGrad.addColorStop(0.6, "#6a0000");
+  coreGrad.addColorStop(1,   "#150000");
   ctx.beginPath();
   for (let s = 0; s < 18; s++) {
     const a = (s / 18) * Math.PI * 2;
@@ -1669,11 +1680,12 @@ function drawNode(x, y) {
   ctx.closePath();
   ctx.fillStyle = coreGrad; ctx.fill();
   ctx.shadowBlur = 0;
-  // Specular gleam
-  ctx.fillStyle = "rgba(255,200,190,0.20)";
+  // Specular gleam in player glow color
+  ctx.fillStyle = pGlow; ctx.globalAlpha = 0.22;
   ctx.beginPath();
   ctx.ellipse(cx - CELL*0.06, cy - CELL*0.08, CELL*0.07, CELL*0.045, -0.4, 0, Math.PI*2);
   ctx.fill();
+  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
@@ -1681,12 +1693,23 @@ function drawNodePreview(x, y) {
   if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return;
   const board = lastState ? lastState.board : null;
   if (!board) return;
-  const valid = board[y][x] === 0 && !(lastState.heads && lastState.heads.some(h => h && h.x === x && h.y === y));
+  const myNum = myPlayerIdx + 1;
+  const heads = lastState ? (lastState.heads || []) : [];
+  const isHead = heads.some(h => h && h.x === x && h.y === y);
+  // Valid if empty, not a head, and 4-adjacent to at least one of my cells
+  const adj4 = [[1,0],[-1,0],[0,1],[0,-1]];
+  const hasMyAdj = adj4.some(([dx, dy]) => {
+    const nx = x + dx, ny = y + dy;
+    return nx >= 0 && nx < boardSize && ny >= 0 && ny < boardSize && board[ny][nx] === myNum;
+  });
+  const valid = board[y][x] === 0 && !isHead && hasMyAdj;
+  const pColor = colorFor(myNum) || "#f4c430";
+  const pGlow  = glowFor(myNum)  || "#ffe066";
   const px = x * CELL, py = y * CELL;
   const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
   if (valid) {
-    ctx.shadowColor = "#cc0800"; ctx.shadowBlur = CELL * 0.5;
-    ctx.strokeStyle = `rgba(180,10,0,${0.7 + pulse * 0.25})`;
+    ctx.shadowColor = pGlow; ctx.shadowBlur = CELL * 0.5;
+    ctx.strokeStyle = `${pColor}${Math.round((0.7 + pulse * 0.25) * 255).toString(16).padStart(2,"0")}`;
     ctx.lineWidth = 2.5;
     ctx.setLineDash([4, 3]);
     ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
@@ -1695,13 +1718,12 @@ function drawNodePreview(x, y) {
     ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
     ctx.shadowBlur = 0;
     // Show which adjacent enemy cells would die
-    const heads = lastState.heads || [];
-    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    for (const [dx, dy] of adj4) {
       const nx = x + dx, ny = y + dy;
       if (nx < 0 || nx >= boardSize || ny < 0 || ny >= boardSize) continue;
       if (heads.some(h => h && h.x === nx && h.y === ny)) continue;
       const v = board[ny][nx];
-      if (v > 0 && v !== (myPlayerIdx + 1)) drawDeathOutline(nx, ny);
+      if (v > 0 && v !== myNum) drawDeathOutline(nx, ny);
     }
   } else {
     ctx.strokeStyle = "rgba(180,10,0,0.3)";
