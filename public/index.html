@@ -451,41 +451,30 @@
             </select>
           </div>
         </div>
-        <div class="field">
-          <label>necro nodes</label>
-          <select id="nodesEnabledSelect">
-            <option value="false" selected>disabled</option>
-            <option value="true">enabled</option>
-          </select>
-        </div>
-        <div id="nodeOptions" class="hidden">
-          <div class="field-row">
-            <div class="field">
-              <label>starting nodes</label>
-              <select id="startingNodesSelect">
-                <option value="1">1 node</option>
-                <option value="2" selected>2 nodes</option>
-                <option value="3">3 nodes</option>
-                <option value="4">4 nodes</option>
-                <option value="5">5 nodes</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>node size</label>
-              <select id="nodeSizeSelect">
-                <option value="1" selected>1×1 cell</option>
-                <option value="2">2×2 cluster</option>
-              </select>
-            </div>
-          </div>
+        <div class="field-row">
           <div class="field">
-            <label>node regeneration</label>
-            <select id="nodeRegenSelect">
-              <option value="off" selected>off</option>
-              <option value="slow">slow (every 20 moves)</option>
-              <option value="fast">fast (every 10 moves)</option>
+            <label>necro nodes</label>
+            <select id="startingNodesSelect">
+              <option value="0" selected>off</option>
+              <option value="1">1 starting</option>
+              <option value="2">2 starting</option>
+              <option value="3">3 starting</option>
             </select>
           </div>
+          <div class="field">
+            <label>node size</label>
+            <select id="nodeSizeSelect">
+              <option value="1" selected>1×1 cell</option>
+              <option value="2">2×2 cluster</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>node earning</label>
+          <select id="nodeRegenSelect">
+            <option value="off" selected>starting only</option>
+            <option value="on">earn by growing</option>
+          </select>
         </div>
         <button class="act" id="createBtn">Create New Colony</button>
       </div>
@@ -539,6 +528,7 @@
       </div>
 
       <button class="act danger" id="biteBtn" style="margin-top:12px;">BITE (3)</button>
+      <button class="act" id="nodeBtn" style="margin-top:6px;border-color:#b52000;color:#b52000;display:none;">NODE (0)</button>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
         <button class="act" id="passBtn" style="margin-top:0;">PASS</button>
         <button class="act danger" id="resignBtn" style="margin-top:0;">RESIGN</button>
@@ -628,6 +618,7 @@ let viewingTurn = null;        // index into replaySnapshots, null = live
 let replayReturnMode = "live"; // "live" | "results"
 let pendingReplayTurn = null;  // set while awaiting snapshot fetch (user-requested)
 let replayPrefetching = false; // true while pre-fetching snapshots at game-end
+let nodePlaceMode = false;
 
 function makeCode() {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -762,7 +753,6 @@ document.getElementById("createBtn").onclick = () => {
     startingBites: document.getElementById("startingBitesSelect").value,
     headProtectRadius: document.getElementById("headProtectSelect").value,
     comebackBonus: document.getElementById("comebackBonusSelect").value,
-    nodesEnabled: document.getElementById("nodesEnabledSelect").value,
     startingNodes: document.getElementById("startingNodesSelect").value,
     nodeSize: document.getElementById("nodeSizeSelect").value,
     nodeRegen: document.getElementById("nodeRegenSelect").value,
@@ -785,9 +775,6 @@ document.getElementById("joinBtn").onclick = () => {
 };
 document.getElementById("codeInput").addEventListener("input", (e) => {
   e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-});
-document.getElementById("nodesEnabledSelect").addEventListener("change", (e) => {
-  document.getElementById("nodeOptions").classList.toggle("hidden", e.target.value !== "true");
 });
 
 document.getElementById("startBtn").onclick = () => {
@@ -891,6 +878,16 @@ document.getElementById("biteBtn").onclick = () => {
   if (lastState.turn !== myPlayerIdx) return;
   if (lastState.bitesRemaining[myPlayerIdx] <= 0) return;
   biteMode = !biteMode;
+  nodePlaceMode = false;
+  render();
+};
+document.getElementById("nodeBtn").onclick = () => {
+  if (!lastState || lastState.finished) return;
+  if (lastState.turn !== myPlayerIdx) return;
+  const nodesLeft = (lastState.nodesRemaining || [])[myPlayerIdx] || 0;
+  if (nodesLeft <= 0) return;
+  nodePlaceMode = !nodePlaceMode;
+  biteMode = false;
   render();
 };
 
@@ -1202,6 +1199,12 @@ function ingestEvents(msg) {
       anims.push({ x, y, type: "convert", startedAt: now + 200 + (j * 14), duration: 520, owner: moverNum });
       j++;
     }
+  } else if (e.kind === "place_node") {
+    let nk = 0;
+    for (const [x, y] of e.killed || []) {
+      anims.push({ x, y, type: "kill", startedAt: now + 80 + (nk * 12), duration: 420 });
+      nk++;
+    }
   } else if (e.kind === "bite") {
     if (e.bitten) {
       const [bx, by] = e.bitten;
@@ -1337,7 +1340,9 @@ function render() {
 
   // Hover preview (disabled in replay mode)
   if (!isReplay && !finished && turn === myPlayerIdx && hover.x >= 0) {
-    if (biteMode) {
+    if (nodePlaceMode) {
+      drawNodePreview(hover.x, hover.y);
+    } else if (biteMode) {
       drawProtectionRings(heads);
       drawBitePreview(hover.x, hover.y);
       const valid = checkValidBite(hover.x, hover.y, myPlayerIdx + 1, board, heads);
@@ -1568,28 +1573,142 @@ function drawNode(x, y) {
   const px = x * CELL, py = y * CELL;
   const cx = px + CELL / 2, cy = py + CELL / 2;
   const t = pulseT;
-  // Dark toxic fill
-  ctx.fillStyle = "#111a09";
+  const phase = x * 1.73 + y * 2.53;
+  const pulse  = 0.5 + 0.5 * Math.sin(t * 0.008 + phase);
+  const rage   = 0.5 + 0.5 * Math.sin(t * 0.013 + phase * 1.7);
+
+  // Void core — nearly black with deep crimson tint
+  ctx.fillStyle = "#160100";
   ctx.fillRect(px + 1, py + 1, CELL - 2, CELL - 2);
-  // Pulsing toxic glow border
-  const pulse = 0.5 + 0.5 * Math.sin(t * 0.005 + x * 1.3 + y * 2.1);
-  ctx.strokeStyle = `rgba(60, 100, 20, ${0.55 + pulse * 0.3})`;
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
-  // Inner X
-  ctx.strokeStyle = `rgba(80, 130, 25, ${0.45 + pulse * 0.25})`;
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(px + 5, py + 5); ctx.lineTo(px + CELL - 5, py + CELL - 5);
-  ctx.moveTo(px + CELL - 5, py + 5); ctx.lineTo(px + 5, py + CELL - 5);
-  ctx.stroke();
-  // Toxic core orb
-  ctx.shadowColor = "#4a8010"; ctx.shadowBlur = CELL * 0.4 * pulse;
-  ctx.fillStyle = `rgba(55, 90, 15, ${0.7 + pulse * 0.2})`;
-  ctx.beginPath();
-  ctx.arc(cx, cy, CELL * (0.13 + 0.04 * pulse), 0, Math.PI * 2);
-  ctx.fill();
+
+  // Pulsing blood-red aura
+  ctx.shadowColor = "#cc0800";
+  ctx.shadowBlur = CELL * (0.55 + pulse * 1.1);
+  ctx.fillStyle = `rgba(110, 0, 0, ${0.13 + rage * 0.17})`;
+  ctx.fillRect(px, py, CELL, CELL);
   ctx.shadowBlur = 0;
+
+  // Razor spikes — animated rotation + length variation
+  const SPIKES = 7;
+  ctx.save();
+  ctx.translate(cx, cy);
+  for (let s = 0; s < SPIKES; s++) {
+    const baseA = (s / SPIKES) * Math.PI * 2 + t * 0.0007;
+    const wobble = 0.11 * Math.sin(t * 0.005 + s * 2.3 + phase);
+    const a = baseA + wobble;
+    const spikeLen = CELL * (0.44 + 0.15 * Math.abs(Math.sin(t * 0.006 + s * 1.7 + phase)));
+    const w = CELL * 0.062;
+    const grad = ctx.createLinearGradient(0, 0, Math.cos(a) * spikeLen, Math.sin(a) * spikeLen);
+    grad.addColorStop(0,   `rgba(90, 0, 0, 0.55)`);
+    grad.addColorStop(0.5, `rgba(195, 15, 5, 0.85)`);
+    grad.addColorStop(1,   `rgba(255, 55, 25, ${0.45 + pulse * 0.45})`);
+    ctx.shadowColor = "#ff0a00"; ctx.shadowBlur = CELL * 0.28;
+    ctx.fillStyle = grad;
+    ctx.save();
+    ctx.rotate(a);
+    ctx.beginPath();
+    ctx.moveTo(CELL * 0.09, 0);
+    ctx.lineTo(-w * 0.5, spikeLen * 0.42);
+    ctx.lineTo(0, spikeLen);
+    ctx.lineTo(w * 0.5, spikeLen * 0.42);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+  ctx.shadowBlur = 0;
+
+  // Thread-veil-style ichor tendrils — bezier curves, blood red
+  ctx.save();
+  ctx.lineCap = "round";
+  for (let d = 0; d < 6; d++) {
+    const baseAngle = (d / 6) * Math.PI * 2 + 0.7 + t * 0.0005;
+    const wave = 0.13 * Math.sin(t * 0.004 + d * 2.1 + phase);
+    const angle = baseAngle + wave;
+    const len = CELL * (0.20 + 0.17 * Math.abs(Math.sin(t * 0.0025 + d * 3.1 + phase)));
+    const sx = cx + CELL * 0.13 * Math.cos(baseAngle);
+    const sy = cy + CELL * 0.13 * Math.sin(baseAngle);
+    const cpx = sx + len * 0.5 * Math.cos(angle + 0.3);
+    const cpy = sy + len * 0.5 * Math.sin(angle + 0.3) + len * 0.14;
+    const ex  = sx + len * Math.cos(angle);
+    const ey  = sy + len * Math.sin(angle) + len * 0.18;
+    ctx.strokeStyle = `rgba(155, 8, 0, ${0.6 + rage * 0.32})`;
+    ctx.lineWidth = CELL * 0.042;
+    ctx.shadowColor = "#ff1500"; ctx.shadowBlur = CELL * 0.14;
+    ctx.globalAlpha = 0.82;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(cpx, cpy, ex, ey);
+    ctx.stroke();
+    ctx.fillStyle = `rgba(175, 12, 0, ${0.72 + pulse * 0.22})`;
+    ctx.globalAlpha = 0.92;
+    ctx.shadowBlur = CELL * 0.08;
+    ctx.beginPath();
+    ctx.arc(ex, ey, CELL * 0.04 * (0.7 + 0.3 * rage), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+
+  // Central lumpy bloody core
+  ctx.save();
+  ctx.shadowColor = "#ff0800"; ctx.shadowBlur = CELL * (0.38 + rage * 0.48);
+  const coreR = CELL * (0.19 + 0.045 * Math.sin(t * 0.009 + phase));
+  const coreGrad = ctx.createRadialGradient(cx - CELL*0.05, cy - CELL*0.05, CELL*0.02, cx, cy, coreR);
+  coreGrad.addColorStop(0,   "#ffdddd");
+  coreGrad.addColorStop(0.2, "#ff2500");
+  coreGrad.addColorStop(0.6, "#830000");
+  coreGrad.addColorStop(1,   "#200000");
+  ctx.beginPath();
+  for (let s = 0; s < 18; s++) {
+    const a = (s / 18) * Math.PI * 2;
+    const lump = coreR + CELL * 0.042 * Math.sin(t * 0.006 + s * 4.1 + phase);
+    const ppx = cx + lump * Math.cos(a), ppy = cy + lump * Math.sin(a);
+    s === 0 ? ctx.moveTo(ppx, ppy) : ctx.lineTo(ppx, ppy);
+  }
+  ctx.closePath();
+  ctx.fillStyle = coreGrad; ctx.fill();
+  ctx.shadowBlur = 0;
+  // Specular gleam
+  ctx.fillStyle = "rgba(255,200,190,0.20)";
+  ctx.beginPath();
+  ctx.ellipse(cx - CELL*0.06, cy - CELL*0.08, CELL*0.07, CELL*0.045, -0.4, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawNodePreview(x, y) {
+  if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return;
+  const board = lastState ? lastState.board : null;
+  if (!board) return;
+  const valid = board[y][x] === 0 && !(lastState.heads && lastState.heads.some(h => h && h.x === x && h.y === y));
+  const px = x * CELL, py = y * CELL;
+  const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
+  if (valid) {
+    ctx.shadowColor = "#cc0800"; ctx.shadowBlur = CELL * 0.5;
+    ctx.strokeStyle = `rgba(180,10,0,${0.7 + pulse * 0.25})`;
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(120,0,0,0.18)";
+    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.shadowBlur = 0;
+    // Show which adjacent enemy cells would die
+    const heads = lastState.heads || [];
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || nx >= boardSize || ny < 0 || ny >= boardSize) continue;
+      if (heads.some(h => h && h.x === nx && h.y === ny)) continue;
+      const v = board[ny][nx];
+      if (v > 0 && v !== (myPlayerIdx + 1)) drawDeathOutline(nx, ny);
+    }
+  } else {
+    ctx.strokeStyle = "rgba(180,10,0,0.3)";
+    ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.setLineDash([]);
+  }
 }
 
 function drawCellGhost(x, y, color) {
@@ -1860,6 +1979,9 @@ function updateSidebar() {
     if (biteMode) {
       status.textContent = "// BITE MODE — click an enemy cell adjacent to your colony";
       status.classList.add("bite-mode");
+    } else if (nodePlaceMode) {
+      status.textContent = "// NODE MODE — click any empty cell to place a necro node";
+      status.classList.add("bite-mode");
     } else {
       status.textContent = "// your move";
       status.classList.remove("bite-mode");
@@ -1871,7 +1993,7 @@ function updateSidebar() {
     status.classList.remove("bite-mode");
     status.style.color = "var(--text-dim)";
   }
-  if (biteMode) canvas.classList.add("bite-mode");
+  if (biteMode || nodePlaceMode) canvas.classList.add("bite-mode");
   else canvas.classList.remove("bite-mode");
 }
 
@@ -1884,6 +2006,25 @@ function updateBiteButton() {
   biteBtn.textContent = `BITE (${remaining})`;
   biteBtn.disabled = !myTurn || remaining <= 0;
   biteBtn.classList.toggle("active", biteMode);
+
+  const nodeBtn = document.getElementById("nodeBtn");
+  const nodesLeft = (lastState.nodesRemaining || [])[myPlayerIdx] || 0;
+  const nodesEnabled = lastState.settings && lastState.settings.nodesEnabled;
+  nodeBtn.style.display = nodesEnabled ? "block" : "none";
+  if (nodesEnabled) {
+    nodeBtn.textContent = `⬟ NODE (${nodesLeft})`;
+    nodeBtn.disabled = !myTurn || nodesLeft <= 0;
+    nodeBtn.classList.toggle("active", nodePlaceMode);
+    if (nodePlaceMode) {
+      nodeBtn.style.background = "#b52000";
+      nodeBtn.style.color = "var(--bg-deep)";
+    } else {
+      nodeBtn.style.background = "transparent";
+      nodeBtn.style.color = nodesLeft > 0 ? "#b52000" : "var(--text-dim)";
+      nodeBtn.style.borderColor = nodesLeft > 0 ? "#b52000" : "var(--text-dim)";
+    }
+  }
+
   document.getElementById("passBtn").disabled = !myTurn;
   document.getElementById("resignBtn").disabled = lastState.finished ||
     (lastState.eliminated && lastState.eliminated[myPlayerIdx]);
@@ -2012,7 +2153,10 @@ canvas.addEventListener("click", () => {
   if (!lastState || lastState.finished) return;
   if (lastState.turn !== myPlayerIdx) return;
   if (hover.x < 0) return;
-  if (biteMode) {
+  if (nodePlaceMode) {
+    send({ type: "place_node", x: hover.x, y: hover.y });
+    nodePlaceMode = false;
+  } else if (biteMode) {
     send({ type: "bite", x: hover.x, y: hover.y });
     biteMode = false;
   } else {
@@ -2023,7 +2167,8 @@ canvas.addEventListener("click", () => {
 window.addEventListener("keydown", (e) => {
   if (e.key === "r" || e.key === "R") rotation = (rotation + 1) % 4;
   if (e.key === "b" || e.key === "B") document.getElementById("biteBtn").click();
-  if (e.key === "Escape" && biteMode) biteMode = false;
+  if (e.key === "n" || e.key === "N") document.getElementById("nodeBtn").click();
+  if (e.key === "Escape") { if (biteMode) biteMode = false; if (nodePlaceMode) nodePlaceMode = false; }
 });
 
 let touchStart = null;
@@ -2042,7 +2187,8 @@ canvas.addEventListener("touchend", (e) => {
   const y = Math.floor((touchStart.clientY - rect.top) / CELL);
   hover = { x, y };
   if (lastState && !lastState.finished && lastState.turn === myPlayerIdx) {
-    if (biteMode) { send({ type: "bite", x, y }); biteMode = false; }
+    if (nodePlaceMode) { send({ type: "place_node", x, y }); nodePlaceMode = false; }
+    else if (biteMode) { send({ type: "bite", x, y }); biteMode = false; }
     else {
       const piece = lastState.nextPiece[myPlayerIdx];
       send({ type: "move", piece, x, y, rotation });

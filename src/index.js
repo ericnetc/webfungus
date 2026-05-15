@@ -28,13 +28,13 @@ const BITE_CAPTURE_BONUS_THRESHOLD = 5;
 const BITE_CASCADE_THRESHOLD = 8;  // cascade kills needed for flat +1 bite
 const BITE_ELIM_BONUS = 2;
 const BITE_MILESTONE_DIVISOR = 5;  // 1 bite per (boardSize*5) cells grown
-// Necro nodes: inert obstacles that kill cells placed adjacent to them.
+// Necro nodes: player-placed obstacles that kill cells placed adjacent to them.
 const NODE_CELL_VALUE = -2;
-const DEFAULT_NODES_ENABLED = false;
-const DEFAULT_STARTING_NODES = 2;
+const DEFAULT_STARTING_NODES = 1;
 const DEFAULT_NODE_SIZE = 1;   // 1 = single cell, 2 = 2×2 cluster
 const DEFAULT_NODE_REGEN = "off";
-const NODE_REGEN_RATES = { slow: 20, fast: 10 }; // every N primary moves
+const NODE_MAX = 3;
+const NODE_MILESTONE_DIVISOR = 8;  // earn 1 node per (boardSize×8) cells grown
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
 const VALID_LOOKAHEAD = [0, 1, 3, 5];
@@ -345,35 +345,35 @@ function countCellsNearHead(board, head, size) {
   return n;
 }
 
-// Place necro nodes on the board. Each node is a cluster of nodeSize×nodeSize cells.
-// Keeps a 2-cell buffer from any head position.
-function placeNodes(board, heads, size, count, nodeSize) {
-  const ns = Math.max(1, Math.min(2, nodeSize || 1));
-  for (let n = 0; n < count; n++) {
-    for (let attempt = 0; attempt < 200; attempt++) {
-      const x = Math.floor(Math.random() * (size - ns + 1));
-      const y = Math.floor(Math.random() * (size - ns + 1));
-      let ok = true;
-      for (let dy = -2; dy < ns + 2 && ok; dy++) {
-        for (let dx = -2; dx < ns + 2 && ok; dx++) {
-          const nx = x + dx, ny = y + dy;
-          if (!inBounds(nx, ny, size)) continue;
-          if (isHeadAt(heads, nx, ny)) ok = false;
-        }
-      }
-      for (let dy = 0; dy < ns && ok; dy++) {
-        for (let dx = 0; dx < ns && ok; dx++) {
-          if (board[y + dy][x + dx] !== 0) ok = false;
-        }
-      }
-      if (ok) {
-        for (let dy = 0; dy < ns; dy++)
-          for (let dx = 0; dx < ns; dx++)
-            board[y + dy][x + dx] = NODE_CELL_VALUE;
-        break;
-      }
-    }
+function validateNodePlacement(board, x, y, size, heads) {
+  if (!inBounds(x, y, size)) return { ok: false, reason: "out of bounds" };
+  if (isHeadAt(heads, x, y)) return { ok: false, reason: "cannot place on a head" };
+  if (board[y][x] !== 0) return { ok: false, reason: "cell occupied" };
+  return { ok: true };
+}
+
+function checkNodeMilestones(game, playerIdx) {
+  if (!game.nodesMilestone || !game.nodesRemaining) return 0;
+  const playerNum = playerIdx + 1;
+  const milestoneSize = Math.max(10, Math.floor(game.size * NODE_MILESTONE_DIVISOR));
+  const cells = countCells(game.board, playerNum, game.size);
+  const newMilestone = Math.floor(cells / milestoneSize);
+  const prev = game.nodesMilestone[playerIdx];
+  if (newMilestone > prev) {
+    const earned = newMilestone - prev;
+    game.nodesMilestone[playerIdx] = newMilestone;
+    game.nodesRemaining[playerIdx] = Math.min(NODE_MAX, game.nodesRemaining[playerIdx] + earned);
+    return earned;
   }
+  return 0;
+}
+
+function hasLegalNodePlacement(board, size, heads, nodesRemaining) {
+  if (nodesRemaining <= 0) return false;
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++)
+      if (board[y][x] === 0 && !isHeadAt(heads, x, y)) return true;
+  return false;
 }
 
 // Kill any placed cells that are 4-adjacent to a node. Returns killed cell list.
@@ -497,9 +497,7 @@ function newGame(settings, slots) {
     board[h.y][h.x] = h.playerNum;
   }
   const startBites = settings.startingBites != null ? settings.startingBites : computeStartingBites(size);
-  if (settings.nodesEnabled && settings.startingNodes > 0) {
-    placeNodes(board, heads, size, settings.startingNodes, settings.nodeSize || 1);
-  }
+  const startNodes = settings.nodesEnabled ? (settings.startingNodes || 0) : 0;
   return {
     size, offset, board,
     heads,
@@ -508,12 +506,13 @@ function newGame(settings, slots) {
     bags: heads.map(() => topUpBag([], 12)),
     nextPiece: heads.map(() => null),
     bitesRemaining: heads.map(() => startBites),
-    bitesMilestone: heads.map(() => 0),  // highest colony-size milestone reached per player
+    bitesMilestone: heads.map(() => 0),
+    nodesRemaining: heads.map(() => startNodes),
+    nodesMilestone: heads.map(() => 0),
     eliminated: heads.map(() => false),
     consecutivePasses: 0,
     lastEvents: null,
     moveLog: [],
-    moveCount: 0,  // total primary moves made (for node regen)
     winner: null,
     finished: false,
     endReason: null,
@@ -545,15 +544,14 @@ function validateSettings(raw) {
   const headProtectRadius = clampInt(raw.headProtectRadius, 0, 2, DEFAULT_HEAD_PROTECT);
   const comebackBonus = raw.comebackBonus === "true" || raw.comebackBonus === true;
   const startingBites = clampInt(raw.startingBites, 1, 6, STARTING_BITES);
-  const nodesEnabled = raw.nodesEnabled === "true" || raw.nodesEnabled === true;
-  const startingNodes = clampInt(raw.startingNodes, 1, 5, DEFAULT_STARTING_NODES);
+  const startingNodes = clampInt(raw.startingNodes, 0, 3, DEFAULT_STARTING_NODES);
   const nodeSize = clampInt(raw.nodeSize, 1, 2, DEFAULT_NODE_SIZE);
   const nodeRegenRaw = String(raw.nodeRegen || "");
-  const nodeRegen = ["off","slow","fast"].includes(nodeRegenRaw) ? nodeRegenRaw : DEFAULT_NODE_REGEN;
+  const nodeRegen = ["off","on"].includes(nodeRegenRaw) ? nodeRegenRaw : DEFAULT_NODE_REGEN;
   return {
     size, offset, elimFate, winCondition, lookahead: DEFAULT_LOOKAHEAD,
     biteScaling, headProtectRadius, comebackBonus, startingBites,
-    nodesEnabled, startingNodes, nodeSize, nodeRegen,
+    nodesEnabled: startingNodes > 0, startingNodes, nodeSize, nodeRegen,
   };
 }
 
@@ -999,6 +997,7 @@ export class Room extends DurableObject {
       winner: this.game.winner,
       endReason: this.game.endReason,
       counts: this.game.heads.map(h => h ? countCells(this.game.board, h.playerNum, this.game.size) : 0),
+      nodesRemaining: this.game.nodesRemaining || [],
       moveLog: this.game.moveLog.slice(-25),
       lastEvents: this.game.lastEvents,
       consecutivePasses: this.game.consecutivePasses || 0,
@@ -1100,6 +1099,12 @@ export class Room extends DurableObject {
       await this.ctx.storage.put("snapshots", []);
       this.broadcastState();
       this.scheduleBotIfNeeded();
+      return;
+    }
+    if (msg.type === "place_node") {
+      const r = this.handlePlaceNode(playerIdx, msg);
+      if (r.error) { ws.send(JSON.stringify({ type: "error", error: r.error })); return; }
+      await this.persistAndBroadcast();
       return;
     }
     if (msg.type === "get_snapshots") {
@@ -1262,21 +1267,13 @@ export class Room extends DurableObject {
     g.turn = this.nextLivingTurn(g.turn);
     dealPiece(g, g.turn);
 
-    // Node regeneration: spawn a new node after every N primary moves.
-    g.moveCount = (g.moveCount || 0) + 1;
-    if (this.settings.nodesEnabled && this.settings.nodeRegen !== "off") {
-      const rate = NODE_REGEN_RATES[this.settings.nodeRegen] || 20;
-      if (g.moveCount % rate === 0) {
-        placeNodes(g.board, g.heads.filter(h => h), g.size, 1, this.settings.nodeSize || 1);
-      }
-    }
-
     let cycle = 0;
     while (
       cycle < g.heads.length &&
       !g.eliminated[g.turn] &&
       !hasLegalPlacement(g.board, g.size, g.heads, g.turn + 1, g.nextPiece[g.turn]) &&
-      !hasLegalBite(g.board, g.size, g.heads, g.turn + 1, this.settings.headProtectRadius || 0)
+      !hasLegalBite(g.board, g.size, g.heads, g.turn + 1, this.settings.headProtectRadius || 0) &&
+      !hasLegalNodePlacement(g.board, g.size, g.heads.filter(h => h), (g.nodesRemaining || [])[g.turn] || 0)
     ) {
       g.moveLog.push({ player: g.turn, skipped: true });
       g.turn = this.nextLivingTurn(g.turn);
@@ -1391,6 +1388,8 @@ export class Room extends DurableObject {
     // Check colony-size milestones.
     bitesBonusEarned += checkBiteMilestones(g, playerIdx);
 
+    if (this.settings.nodeRegen === "on") checkNodeMilestones(g, playerIdx);
+
     g.consecutivePasses = 0;
     g.lastEvents = {
       kind: "place",
@@ -1460,6 +1459,8 @@ export class Room extends DurableObject {
     if (killedAll.length >= BITE_CASCADE_THRESHOLD) { awardBiteBonus(g, playerIdx, 1); bitesBonusEarned++; }
     bitesBonusEarned += checkBiteMilestones(g, playerIdx);
 
+    if (this.settings.nodeRegen === "on") checkNodeMilestones(g, playerIdx);
+
     g.consecutivePasses = 0;
     g.lastEvents = {
       kind: "bite",
@@ -1471,6 +1472,76 @@ export class Room extends DurableObject {
     g.moveLog.push({
       player: playerIdx,
       bite: true,
+      x: msg.x, y: msg.y,
+      killed: killedAll.length,
+    });
+
+    this.resolveEndOfTurn();
+    return { ok: true };
+  }
+
+  handlePlaceNode(playerIdx, msg) {
+    const g = this.game;
+    if (!g || g.finished) return { error: "game not active" };
+    if (g.turn !== playerIdx) return { error: "not your turn" };
+    if (g.eliminated[playerIdx]) return { error: "you are eliminated" };
+    if (!g.nodesRemaining || g.nodesRemaining[playerIdx] <= 0) return { error: "no nodes remaining" };
+    const heads = g.heads.filter(h => h);
+    const v = validateNodePlacement(g.board, msg.x, msg.y, g.size, heads);
+    if (!v.ok) return { error: v.reason };
+
+    const playerNum = playerIdx + 1;
+    const ns = this.settings.nodeSize || 1;
+
+    // Place node cells (1×1 or 2×2 cluster)
+    const nodeCells = [];
+    for (let dy = 0; dy < ns; dy++) {
+      for (let dx = 0; dx < ns; dx++) {
+        const nx = msg.x + dx, ny = msg.y + dy;
+        if (!inBounds(nx, ny, g.size) || g.board[ny][nx] !== 0 || isHeadAt(heads, nx, ny)) continue;
+        g.board[ny][nx] = NODE_CELL_VALUE;
+        nodeCells.push([nx, ny]);
+      }
+    }
+    if (nodeCells.length === 0) return { error: "could not place node" };
+
+    g.nodesRemaining[playerIdx]--;
+
+    // Immediately kill adjacent enemy cells
+    const killedSet = new Set();
+    for (const [ncx, ncy] of nodeCells) {
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const ax = ncx + dx, ay = ncy + dy;
+        if (!inBounds(ax, ay, g.size) || isHeadAt(heads, ax, ay)) continue;
+        const cv = g.board[ay][ax];
+        if (cv > 0 && cv !== playerNum) { g.board[ay][ax] = 0; killedSet.add(`${ax},${ay}`); }
+      }
+    }
+    const directKilled = [...killedSet].map(k => k.split(",").map(Number));
+
+    // Orphan cascade from killed cells
+    const orphans = processOrphans(g.board, heads, g.size, "die");
+    const cascadeKilled = [];
+    for (const p in orphans) {
+      if (parseInt(p, 10) !== playerNum) cascadeKilled.push(...orphans[p]);
+    }
+    const killedAll = [...directKilled, ...cascadeKilled];
+
+    // Node milestone earning
+    let nodesEarned = 0;
+    if (this.settings.nodeRegen === "on") nodesEarned = checkNodeMilestones(g, playerIdx);
+
+    g.consecutivePasses = 0;
+    g.lastEvents = {
+      kind: "place_node",
+      player: playerIdx,
+      nodeCells,
+      killed: killedAll,
+      nodesEarned,
+    };
+    g.moveLog.push({
+      player: playerIdx,
+      nodePlaced: true,
       x: msg.x, y: msg.y,
       killed: killedAll.length,
     });
