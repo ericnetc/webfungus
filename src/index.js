@@ -134,13 +134,14 @@ function validateBite(board, x, y, playerNum, size, heads, headProtectRadius = 0
   if (!inBounds(x, y, size)) return { ok: false, reason: "out of bounds" };
   if (isHeadAt(heads, x, y)) return { ok: false, reason: "cannot bite a head" };
   const v = board[y][x];
-  if (v === 0 || v === -1 || v === playerNum) {
-    return { ok: false, reason: "must bite an enemy cell" };
+  // Block empty, neutral, own regular cells, own nodes
+  if (v === 0 || v === -1 || v === playerNum ||
+      (isNodeCell(v) && nodeOwnerNum(v) === playerNum)) {
+    return { ok: false, reason: "must bite an enemy cell or enemy node" };
   }
-  // Head protection ring: a head shields only its OWN player's cells.
-  // Enemy cells that happen to be near your head are still biteable.
-  if (headProtectRadius > 0) {
-    const targetPlayerNum = board[y][x];
+  // Head protection applies only to regular enemy cells, not nodes
+  if (headProtectRadius > 0 && !isNodeCell(v)) {
+    const targetPlayerNum = v;
     for (const h of heads) {
       if (!h) continue;
       if (h.playerNum === targetPlayerNum &&
@@ -206,6 +207,7 @@ function captureFlanked(board, playerNum, size, heads) {
 
 // --- Connectivity / orphan rule ---
 function reachableFromHead(board, head, size) {
+  const nv = nodeValueForPlayer(head.playerNum); // own node value
   const reached = new Set([`${head.x},${head.y}`]);
   const stack = [[head.x, head.y]];
   while (stack.length) {
@@ -215,7 +217,8 @@ function reachableFromHead(board, head, size) {
       if (!inBounds(nx, ny, size)) continue;
       const k = `${nx},${ny}`;
       if (reached.has(k)) continue;
-      if (board[ny][nx] !== head.playerNum) continue;
+      const v = board[ny][nx];
+      if (v !== head.playerNum && v !== nv) continue; // traverse own cells AND own nodes
       reached.add(k);
       stack.push([nx, ny]);
     }
@@ -228,15 +231,19 @@ function processOrphans(board, heads, size, fate, convertTo) {
   for (const head of heads) {
     if (!head) continue;
     const p = head.playerNum;
+    const nv = nodeValueForPlayer(p);
     result[p] = [];
     const reached = reachableFromHead(board, head, size);
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
-        if (board[y][x] !== p) continue;
+        const v = board[y][x];
+        if (v !== p && v !== nv) continue; // process own cells AND own nodes
         if (isHeadAt(heads, x, y)) continue;
         if (!reached.has(`${x},${y}`)) {
           result[p].push([x, y]);
-          if (fate === "die") {
+          if (v === nv) {
+            board[y][x] = 0; // orphaned nodes always die
+          } else if (fate === "die") {
             board[y][x] = 0;
           } else if (fate === "convert") {
             const target = convertTo && convertTo[p] != null ? convertTo[p] : 0;
@@ -646,17 +653,41 @@ function simulatePlacement(board, heads, size, playerNum, cells) {
   return { flipped, orphans, myGain, enemyLoss };
 }
 
-// Returns { orphans, enemyLoss, cascadeSize, directKills }
-// radius: 0 = 1×1, 1 = 3×3, 2 = 5×5 area bite.
-function simulateBite(board, heads, size, playerNum, x, y, radius = 0) {
-  let directKills = 0;
-  for (let dy = -radius; dy <= radius; dy++) {
-    for (let dx = -radius; dx <= radius; dx++) {
-      const nx = x + dx, ny = y + dy;
-      if (!inBounds(nx, ny, size)) continue;
-      if (isHeadAt(heads, nx, ny)) continue;
+// Pick bite direction: from the adjacent player cell, shoot AWAY toward most kills.
+function computeBiteDir(board, x, y, playerNum, size) {
+  let bestDir = [1, 0], bestKills = -1;
+  for (const [adx, ady] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    const ax = x + adx, ay = y + ady;
+    if (!inBounds(ax, ay, size) || board[ay][ax] !== playerNum) continue;
+    const [dx, dy] = [-adx, -ady]; // direction away from adjacent player cell
+    let kills = 0;
+    for (let i = 0; i < 12; i++) {
+      const nx = x + dx*i, ny = y + dy*i;
+      if (!inBounds(nx, ny, size)) break;
       const v = board[ny][nx];
-      if (v > 0 && v !== playerNum) { board[ny][nx] = 0; directKills++; }
+      if (v === playerNum) break;
+      if (v !== 0) kills++;
+    }
+    if (kills > bestKills) { bestKills = kills; bestDir = [dx, dy]; }
+  }
+  return bestDir;
+}
+
+// Returns { orphans, enemyLoss, cascadeSize, directKills }
+// Bite is a straight line: length = 2*radius+1 cells starting at (x,y) going in dir.
+function simulateBite(board, heads, size, playerNum, x, y, radius = 1, dir) {
+  if (!dir) dir = computeBiteDir(board, x, y, playerNum, size);
+  const [dx, dy] = dir;
+  const lineLen = 2 * radius + 1;
+  let directKills = 0;
+  for (let i = 0; i < lineLen; i++) {
+    const nx = x + dx*i, ny = y + dy*i;
+    if (!inBounds(nx, ny, size)) break;
+    if (isHeadAt(heads, nx, ny)) continue;
+    const v = board[ny][nx];
+    // Kill enemy regular cells and enemy nodes
+    if ((v > 0 && v !== playerNum) || (isNodeCell(v) && nodeOwnerNum(v) !== playerNum)) {
+      board[ny][nx] = 0; directKills++;
     }
   }
   const orphans = processOrphans(board, heads, size, "die");
@@ -689,7 +720,8 @@ function pickEasyMove(game, playerIdx, settings) {
       });
       const pool = cascadeBites.length > 0 ? cascadeBites : bites;
       const choice = pool[Math.floor(Math.random() * pool.length)];
-      return { type: "bite", x: choice.x, y: choice.y };
+      return { type: "bite", x: choice.x, y: choice.y,
+        dir: computeBiteDir(game.board, choice.x, choice.y, playerNum, game.size) };
     }
   }
 
@@ -743,7 +775,8 @@ function pickModerateMove(game, playerIdx, settings) {
       const sim = simulateBite(bd, hd, game.size, playerNum, b.x, b.y, biteRadius);
       // Direct area kills = 1.5 each, cascade orphan kills = 3.0 (die permanently)
       const score = sim.directKills * 1.5 + sim.cascadeSize * 3.0 - biteCost;
-      consider({ type: "bite", x: b.x, y: b.y }, score);
+      consider({ type: "bite", x: b.x, y: b.y,
+        dir: computeBiteDir(game.board, b.x, b.y, playerNum, game.size) }, score);
     }
   }
 
@@ -814,7 +847,8 @@ function pickHardMove(game, playerIdx, settings) {
       const bitePenalty = Math.max(0, 2 - simResult.cascadeSize - simResult.directKills * 0.4);
       const greedyScore = evaluateBoard(bd, hd, game.size, playerNum) - bitePenalty;
       candidates.push({
-        action: { type: "bite", x: b.x, y: b.y },
+        action: { type: "bite", x: b.x, y: b.y,
+          dir: computeBiteDir(game.board, b.x, b.y, playerNum, game.size) },
         simBoard: bd, simHeads: hd, greedyScore
       });
     }
@@ -1447,18 +1481,25 @@ export class Room extends DurableObject {
     const radius = effectiveBiteRadius(allCounts[playerIdx], g.size, this.settings, allCounts, playerIdx);
     g.bitesRemaining[playerIdx]--;
 
-    // Remove all enemy cells in the bite area.
+    // Determine bite direction: use client-supplied if valid, else compute from board.
+    const CARD = [[1,0],[-1,0],[0,1],[0,-1]];
+    const isValidDir = d => Array.isArray(d) && d.length === 2 &&
+      CARD.some(([a,b]) => a === d[0] && b === d[1]);
+    const dir = isValidDir(msg.dir) ? msg.dir
+      : computeBiteDir(g.board, msg.x, msg.y, playerNum, g.size);
+    const [ddx, ddy] = dir;
+    const lineLen = 2 * radius + 1;
+
+    // Remove cells in the bite line: enemy regular cells and enemy nodes.
     const removedCells = [];
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        const nx = msg.x + dx, ny = msg.y + dy;
-        if (!inBounds(nx, ny, g.size)) continue;
-        if (isHeadAt(heads, nx, ny)) continue;
-        const cv = g.board[ny][nx];
-        if (cv > 0 && cv !== playerNum) {
-          g.board[ny][nx] = 0;
-          removedCells.push([nx, ny]);
-        }
+    for (let i = 0; i < lineLen; i++) {
+      const nx = msg.x + ddx*i, ny = msg.y + ddy*i;
+      if (!inBounds(nx, ny, g.size)) break;
+      if (isHeadAt(heads, nx, ny)) continue;
+      const cv = g.board[ny][nx];
+      if ((cv > 0 && cv !== playerNum) || (isNodeCell(cv) && nodeOwnerNum(cv) !== playerNum)) {
+        g.board[ny][nx] = 0;
+        removedCells.push([nx, ny]);
       }
     }
     const orphans = processOrphans(g.board, heads, g.size, "die");
