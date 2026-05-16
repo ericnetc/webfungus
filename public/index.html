@@ -607,6 +607,7 @@ let rotation = 0;
 let myRoom = null;
 let boardSize = 20;
 let biteMode = false;
+let hoverRaw = { x: 0, y: 0 }; // raw pixel position on canvas for bite direction
 let pulseT = 0;
 let anims = [];
 let lastSeenEventId = null;
@@ -1039,6 +1040,7 @@ function checkValidBite(x, y, playerNum, board, heads) {
   if (heads && heads.some(h => h && h.x === x && h.y === y)) return false;
   const v = board[y][x];
   if (v === 0 || v === -1 || v === playerNum) return false;
+  if (v <= -2 && (-v - 1) === playerNum) return false; // own node — not biteable
   const hpr = (lastState && lastState.settings) ? (lastState.settings.headProtectRadius || 0) : 0;
   if (hpr > 0 && heads) {
     const targetPlayerNum = v;
@@ -1827,29 +1829,61 @@ function drawReplayHighlights(events) {
   ctx.globalAlpha = 1; ctx.restore();
 }
 
+// Compute bite direction from mouse position within the hovered cell.
+function computeBiteDirFromMouse(cx, cy) {
+  const centerX = (cx + 0.5) * CELL;
+  const centerY = (cy + 0.5) * CELL;
+  const mx = hoverRaw.x - centerX, my = hoverRaw.y - centerY;
+  if (Math.abs(mx) >= Math.abs(my)) return mx >= 0 ? [1, 0] : [-1, 0];
+  return my >= 0 ? [0, 1] : [0, -1];
+}
+
 function drawBitePreview(x, y) {
   if (!lastState) return;
   if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return;
   const valid = checkValidBite(x, y, myPlayerIdx + 1, lastState.board, lastState.heads);
-  const radius = (lastState.biteRadius || [])[myPlayerIdx] || 0;
-  const ax = (x - radius) * CELL, ay = (y - radius) * CELL;
-  const aw = (1 + 2 * radius) * CELL, ah = (1 + 2 * radius) * CELL;
+  const radius = (lastState.biteRadius || [])[myPlayerIdx] || 1;
+  const lineLen = 2 * radius + 1;
+  const [dx, dy] = computeBiteDirFromMouse(x, y);
   const px = x * CELL, py = y * CELL;
+
   if (valid) {
     const pulse = 0.5 + 0.5 * Math.sin(pulseT * 0.012);
-    // Area background tint
-    ctx.fillStyle = getCSS("--warn"); ctx.globalAlpha = 0.10 + pulse * 0.07;
-    ctx.fillRect(ax, ay, aw, ah);
-    // Center cell highlight
-    ctx.globalAlpha = 0.35 + pulse * 0.2;
-    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
-    // Area border (dashed)
+    // Compute the actual line of cells that will be hit
+    const lineCells = [];
+    for (let i = 0; i < lineLen; i++) {
+      const nx = x + dx*i, ny = y + dy*i;
+      if (nx < 0 || nx >= boardSize || ny < 0 || ny >= boardSize) break;
+      lineCells.push([nx, ny]);
+    }
+
+    // Tint each cell in line
+    for (let i = 0; i < lineCells.length; i++) {
+      const [nx, ny] = lineCells[i];
+      const lx = nx * CELL, ly = ny * CELL;
+      ctx.fillStyle = getCSS("--warn");
+      ctx.globalAlpha = i === 0 ? 0.35 + pulse * 0.2 : 0.10 + pulse * 0.07;
+      ctx.fillRect(lx + 2, ly + 2, CELL - 4, CELL - 4);
+    }
+    ctx.globalAlpha = 1;
+
+    // Dashed outline around the whole line
+    const last = lineCells[lineCells.length - 1];
+    let rx, ry, rw, rh;
+    if (dx !== 0) {
+      rx = Math.min(x, last[0]) * CELL; ry = y * CELL;
+      rw = lineCells.length * CELL; rh = CELL;
+    } else {
+      rx = x * CELL; ry = Math.min(y, last[1]) * CELL;
+      rw = CELL; rh = lineCells.length * CELL;
+    }
     ctx.shadowColor = getCSS("--warn-glow"); ctx.shadowBlur = CELL * 0.25;
     ctx.strokeStyle = getCSS("--warn");
     ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.globalAlpha = 0.7 + pulse * 0.25;
-    ctx.strokeRect(ax + 1, ay + 1, aw - 2, ah - 2);
+    ctx.strokeRect(rx + 1, ry + 1, rw - 2, rh - 2);
     ctx.setLineDash([]);
-    // X on center
+
+    // X on the target cell
     ctx.strokeStyle = getCSS("--warn-glow"); ctx.lineWidth = 3; ctx.globalAlpha = 1;
     ctx.beginPath();
     ctx.moveTo(px + 6, py + 6); ctx.lineTo(px + CELL - 6, py + CELL - 6);
@@ -1859,7 +1893,7 @@ function drawBitePreview(x, y) {
     ctx.strokeStyle = getCSS("--text-dim");
     ctx.lineWidth = 1; ctx.globalAlpha = 0.4;
     ctx.setLineDash([3, 3]);
-    ctx.strokeRect(ax + 2, ay + 2, aw - 4, ah - 4);
+    ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
     ctx.setLineDash([]); ctx.globalAlpha = 1;
   }
 }
@@ -1949,18 +1983,17 @@ function updateSidebar() {
     pieceLabel.textContent = isComeback ? "COMEBACK BITE" : "BITE MODE";
     pieceLabel.style.color = isComeback ? "var(--p3)" : "var(--warn)";
     const biteRadius = (lastState.biteRadius || [])[myPlayerIdx] || 1;
-    const dim = biteRadius * 2 + 1;
-    const areaLabel = `${dim}×${dim}`;
-    const hw = 12 + biteRadius * 12, hh = 12 + biteRadius * 12;
+    const lineLen = biteRadius * 2 + 1;
+    const hw = lineLen * 8;
     svg.innerHTML = `
       <g transform="translate(65, 38)">
-        <rect x="${-hw}" y="${-hh}" width="${hw*2}" height="${hh*2}" fill="rgba(232,90,58,0.12)" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <rect x="${-hw}" y="-9" width="${hw*2}" height="18" fill="rgba(232,90,58,0.12)" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="4,3"/>
         <rect x="-9" y="-9" width="18" height="18" fill="none" stroke="var(--warn)" stroke-width="2"/>
         <line x1="-6" y1="-6" x2="6" y2="6" stroke="var(--warn)" stroke-width="2"/>
         <line x1="6" y1="-6" x2="-6" y2="6" stroke="var(--warn)" stroke-width="2"/>
-        <text x="0" y="${hh + 11}" text-anchor="middle" fill="var(--warn)" font-size="9" letter-spacing="2">${areaLabel} AREA</text>
+        <text x="0" y="26" text-anchor="middle" fill="var(--warn)" font-size="9" letter-spacing="2">${lineLen} CELL LINE</text>
       </g>`;
-    pieceHint.innerHTML = `Click enemy cell adjacent to your colony.<br/>Destroys all enemies in ${areaLabel} area (r=${biteRadius}).<br/>Orphaned enemies die. <kbd>ESC</kbd> cancel.`;
+    pieceHint.innerHTML = `Click enemy cell adjacent to your colony.<br/>Move mouse to aim direction. Bites ${lineLen} cells in a line.<br/>Enemy nodes can be bitten. Orphaned enemies die. <kbd>ESC</kbd> cancel.`;
   } else if (myPiece) {
     pieceLabel.textContent = "CURRENT";
     pieceLabel.style.color = "var(--text-dim)";
@@ -2184,8 +2217,10 @@ function startTickIfNeeded() { if (pulseAnim == null) tick(); }
 
 canvas.addEventListener("mousemove", (e) => {
   const rect = canvas.getBoundingClientRect();
-  const x = Math.floor((e.clientX - rect.left) / CELL);
-  const y = Math.floor((e.clientY - rect.top) / CELL);
+  const rx = e.clientX - rect.left, ry = e.clientY - rect.top;
+  hoverRaw = { x: rx, y: ry };
+  const x = Math.floor(rx / CELL);
+  const y = Math.floor(ry / CELL);
   if (x !== hover.x || y !== hover.y) hover = { x, y };
 });
 canvas.addEventListener("mouseleave", () => { hover = { x: -1, y: -1 }; });
@@ -2197,7 +2232,8 @@ canvas.addEventListener("click", () => {
     send({ type: "place_node", x: hover.x, y: hover.y });
     nodePlaceMode = false;
   } else if (biteMode) {
-    send({ type: "bite", x: hover.x, y: hover.y });
+    const bdir = computeBiteDirFromMouse(hover.x, hover.y);
+    send({ type: "bite", x: hover.x, y: hover.y, dir: bdir });
     biteMode = false;
   } else {
     const piece = lastState.nextPiece[myPlayerIdx];
@@ -2228,7 +2264,20 @@ canvas.addEventListener("touchend", (e) => {
   hover = { x, y };
   if (lastState && !lastState.finished && lastState.turn === myPlayerIdx) {
     if (nodePlaceMode) { send({ type: "place_node", x, y }); nodePlaceMode = false; }
-    else if (biteMode) { send({ type: "bite", x, y }); biteMode = false; }
+    else if (biteMode) {
+      // On touch: pick direction from adjacent player cell in lastState
+      let tdir = [1, 0];
+      if (lastState && lastState.board) {
+        const board = lastState.board, myNum = myPlayerIdx + 1;
+        for (const [adx, ady] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const ax = x + adx, ay = y + ady;
+          if (ax >= 0 && ax < boardSize && ay >= 0 && ay < boardSize && board[ay][ax] === myNum) {
+            tdir = [-adx, -ady]; break;
+          }
+        }
+      }
+      send({ type: "bite", x, y, dir: tdir }); biteMode = false;
+    }
     else {
       const piece = lastState.nextPiece[myPlayerIdx];
       send({ type: "move", piece, x, y, rotation });
